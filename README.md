@@ -1,0 +1,2 @@
+# vitola
+Vitola is a refined, modern app designed for cigar enthusiasts who want to track, curate, and elevate their cigar experience. Whether you’re a seasoned collector or new to the world of cigars, Vitola helps you manage your humidor, log smoke sessions, and preserve the details that make each cigar memorable.
