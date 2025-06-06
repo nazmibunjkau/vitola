@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "Vitola",
+    "slug": "vitola",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./img/logo.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./img/logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./img/logo.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "favicon": "./img/logo.png"
+    }
+  }
+}
