@@ -1,7 +1,7 @@
 import LottieView from 'lottie-react-native';
 import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
 
-export default function Home({ navigation }) {
+export default function Start({ navigation }) {
   return (
     <View style={styles.container} >
       <Image source={require('../img/logo.png')} style={styles.logo}/>
@@ -15,7 +15,7 @@ export default function Home({ navigation }) {
       <View style={styles.overlay}>
         <Text style={styles.title}>Welcome to Vitola</Text>
         <Text style={styles.subtitle}>Your personal cigar companion — track your humidor, scan or search cigars, log smoke sessions, and explore the full cigar experience.</Text>
-        <TouchableOpacity style={styles.button} onPress={() => navigation.navigate('MainApp')}>
+        <TouchableOpacity style={styles.button} onPress={() => navigation.navigate('Register')}>
           <Text style={styles.buttonText}>Get Started</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => navigation.navigate('Login')}>
