@@ -1,103 +1,130 @@
 import React, { useState } from 'react'
 import { useNavigation } from "@react-navigation/native"
-import { View, SafeAreaView, StyleSheet, TouchableOpacity, Image, Text, TextInput } from "react-native"
+import { View, SafeAreaView, StyleSheet, TouchableOpacity, Image, Text, TextInput, Keyboard, TouchableWithoutFeedback } from "react-native"
 import { ArrowLeftIcon, CheckIcon } from "react-native-heroicons/solid"
+import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { auth } from '../config/firebase';
 
 export default function Register({}) {
     const navigation = useNavigation()
     const [agreed, setAgreed] = useState(false)
+    const [email, setEmail] = useState('')
+    const [password, setPassword] = useState('')
+    const [name, setName] = useState('')
+    
+    const handleSubmit = async () => {
+        if (name && email && password) {
+            try {
+            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+            await updateProfile(userCredential.user, { displayName: name });
+
+            await auth.currentUser.reload(); 
+            } catch (error) {
+            console.error("Error during registration:", error);
+            alert(`Registration failed: ${error.message}`);
+            }
+        }
+    }
     return (
-        <View style={styles.container}>
-            <SafeAreaView className="flex">
-                <View className="flex-row justify-start">
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <ArrowLeftIcon {...styles.leftArrow}/>
-                    </TouchableOpacity>
-                </View>
-                <View style={styles.logoContainer}>
-                    <Image source={require("../img/logo.png")} style={styles.image}/>
-                </View>
-                <View style={styles.titleContainer}>
-                    <Text style={styles.title}>Create Your Account</Text>
-                </View>
-                <View style={styles.inputContainer}>
-                    <Text style={styles.name}>Full Name</Text>
-                    <TextInput 
-                        style={styles.input} 
-                        placeholder="Enter Name" 
-                        placeholderTextColor='#999'>
-                    </TextInput>
-                </View>
-                <View style={styles.inputContainer}>
-                    <Text style={styles.email}>Email Address</Text>
-                    <TextInput 
-                        style={styles.input} 
-                        placeholder="Enter Email" 
-                        placeholderTextColor='#999'>
-                    </TextInput>
-                </View>
-                <View style={styles.inputContainer}>
-                    <Text style={styles.password}>Password</Text>
-                    <TextInput 
-                        style={styles.input} 
-                        placeholder="Enter Password" 
-                        placeholderTextColor='#999'
-                        secureTextEntry>
-                    </TextInput>
-                    <TouchableOpacity style={styles.registerButton}
-                        onPress={() => {
-                            if (agreed) {
-                                navigation.navigate('Home')
-                            }
-                            else {
-                                alert('You must agree to the Terms & Conditions')
-                            }
-                        }}
-                    >
-                        <Text style={styles.registerButtonText}>Register</Text>
-                    </TouchableOpacity>
-                </View>
-                <View>
-                    <Text style={styles.orText}>
-                        Or
-                    </Text>
-                </View>
-                <View style={styles.socialContainer}>
-                    <TouchableOpacity style={styles.socialButton}>
-                        <Image source={require('../img/google.png')} style={styles.socialIcon}/>
-                    </TouchableOpacity> 
-                    <TouchableOpacity style={styles.socialButton}>
-                        <Image source={require('../img/apple_logo.png')} style={styles.socialIcon}/>
-                    </TouchableOpacity> 
-                    <TouchableOpacity style={styles.socialButton}>
-                        <Image source={require('../img/facebook_logo.png')} style={styles.socialIcon}/>
-                    </TouchableOpacity> 
-                </View>
-                <View style={styles.loginContainer}>
-                    <TouchableOpacity onPress={() => navigation.navigate('Login')}>
-                        <Text style={styles.loginText}>Already have an account? Log in</Text>
-                    </TouchableOpacity>
-                </View>
-                <View style={styles.termsContainer}>
-                    <TouchableOpacity 
-                        onPress={() => setAgreed(!agreed)}
-                        style={styles.checkbox}
-                    >
-                        <View style={[styles.checkboxBox, agreed && styles.checkboxChecked]}>
-                          {agreed && <CheckIcon color="#fff" size={16} />}
-                        </View> 
-                    </TouchableOpacity>
-                    <Text style={styles.termsText}>
-                        I agree to the{' '}
-                        <Text style={styles.linkText}
-                            onPress={() => navigation.navigate('TermsAndConditions')}
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss} accesible={false}>
+            <View style={styles.container}>
+                <SafeAreaView className="flex">
+                    <View className="flex-row justify-start">
+                        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                            <ArrowLeftIcon {...styles.leftArrow}/>
+                        </TouchableOpacity>
+                    </View>
+                    <View style={styles.logoContainer}>
+                        <Image source={require("../img/logo.png")} style={styles.image}/>
+                    </View>
+                    <View style={styles.titleContainer}>
+                        <Text style={styles.title}>Create Your Account</Text>
+                    </View>
+                    <View style={styles.inputContainer}>
+                        <Text style={styles.name}>Full Name</Text>
+                        <TextInput 
+                            style={styles.input} 
+                            value={name}
+                            onChangeText={value => setName(value)}
+                            placeholder="Enter Name" 
+                            placeholderTextColor='#999'>
+                        </TextInput>
+                    </View>
+                    <View style={styles.inputContainer}>
+                        <Text style={styles.email}>Email Address</Text>
+                        <TextInput 
+                            style={styles.input} 
+                            value={email}
+                            onChangeText={value => setEmail(value)}
+                            placeholder="Enter Email" 
+                            placeholderTextColor='#999'>
+                        </TextInput>
+                    </View>
+                    <View style={styles.inputContainer}>
+                        <Text style={styles.password}>Password</Text>
+                        <TextInput 
+                            style={styles.input} 
+                            value={password}
+                            onChangeText={value => setPassword(value)}
+                            placeholder="Enter Password" 
+                            placeholderTextColor='#999'
+                            secureTextEntry>
+                        </TextInput>
+                        <TouchableOpacity style={styles.registerButton}
+                            onPress={() => {
+                                if (agreed) {
+                                    handleSubmit();
+                                }
+                                else {
+                                    alert('You must agree to the Terms & Conditions')
+                                }
+                            }}
                         >
-                            Terms & Conditions
+                            <Text style={styles.registerButtonText}>Register</Text>
+                        </TouchableOpacity>
+                    </View>
+                    <View>
+                        <Text style={styles.orText}>
+                            Or
                         </Text>
-                    </Text>
-                </View>
-            </SafeAreaView>
-        </View>
+                    </View>
+                    <View style={styles.socialContainer}>
+                        <TouchableOpacity style={styles.socialButton}>
+                            <Image source={require('../img/google.png')} style={styles.socialIcon}/>
+                        </TouchableOpacity> 
+                        <TouchableOpacity style={styles.socialButton}>
+                            <Image source={require('../img/apple_logo.png')} style={styles.socialIcon}/>
+                        </TouchableOpacity> 
+                        <TouchableOpacity style={styles.socialButton}>
+                            <Image source={require('../img/facebook_logo.png')} style={styles.socialIcon}/>
+                        </TouchableOpacity> 
+                    </View>
+                    <View style={styles.loginContainer}>
+                        <TouchableOpacity onPress={() => navigation.navigate('Login')}>
+                            <Text style={styles.loginText}>Already have an account? Log in</Text>
+                        </TouchableOpacity>
+                    </View>
+                    <View style={styles.termsContainer}>
+                        <TouchableOpacity 
+                            onPress={() => setAgreed(!agreed)}
+                            style={styles.checkbox}
+                        >
+                            <View style={[styles.checkboxBox, agreed && styles.checkboxChecked]}>
+                            {agreed && <CheckIcon color="#fff" size={16} />}
+                            </View> 
+                        </TouchableOpacity>
+                        <Text style={styles.termsText}>
+                            I agree to the{' '}
+                            <Text style={styles.linkText}
+                                onPress={() => navigation.navigate('TermsAndConditions')}
+                            >
+                                Terms & Conditions
+                            </Text>
+                        </Text>
+                    </View>
+                </SafeAreaView>
+            </View>
+        </TouchableWithoutFeedback>
     )
 } 
 
@@ -137,6 +164,14 @@ const styles = StyleSheet.create({
     inputContainer: {
         marginTop: 20,
         paddingHorizontal: 20
+    },
+    input: {
+        backgroundColor: '#f0f0f0',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 12,
+        fontSize: 14,
+        color: '#333'
     },
     name: {
         fontSize: 14,
@@ -233,13 +268,5 @@ const styles = StyleSheet.create({
         color: '#4b382a',
         fontWeight: 'bold',
         textDecorationLine: 'underline',
-    },
-    input: {
-        backgroundColor: '#f0f0f0',
-        paddingVertical: 10,
-        paddingHorizontal: 16,
-        borderRadius: 12,
-        fontSize: 14,
-        color: '#333'
     }
 })

@@ -1,14 +1,71 @@
-import { StyleSheet } from "react-native"
-import { View } from "react-native"
+import React, { useEffect, useState } from "react"
+import { StyleSheet, SafeAreaView, Text, View, TouchableOpacity } from "react-native"
+import { auth } from "../config/firebase"
+import { Ionicons } from '@expo/vector-icons'
 
-export default function Home({navigation}) {
+export default function Home() {
+    const [firstName, setFirstName] = useState("")
+
+    useEffect(() => {
+        const fetchUser = async () => {
+            const user = auth.currentUser;
+            if (user) {
+                await user.reload();
+                const name = user.displayName || "User";
+                const first = name.split(" ")[0];
+                setFirstName(first);
+            }
+        };
+        fetchUser();
+    }, []);
     return (
-        <View styles={styles.container}>
-
-        </View>
+        <SafeAreaView style={styles.container}>
+            <View style={styles.headerRow}>
+                <View style={styles.textBlock}>
+                    <Text style={styles.greeting}>Hi, {firstName}</Text>
+                    <Text style={styles.subtext}>Welcome Back!</Text>
+                </View>
+                <TouchableOpacity style={styles.bellButton} onPress={() => { /* Add notification logic here */ }}>
+                    <Ionicons name="notifications-outline" size={28} color="#4b382a" />
+                </TouchableOpacity>
+            </View>
+        </SafeAreaView>
     )
 } 
 
 const styles = StyleSheet.create({
-
+    container: {
+        flex: 1,
+        paddingTop: 80,
+        paddingHorizontal: 30,
+        backgroundColor: '#fff'
+    },
+    headerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginRight: 10,
+    },
+    textBlock: {
+        marginLeft: 24,
+    },
+    greeting: {
+        fontSize: 34,
+        fontWeight: '300',
+        fontFamily: 'Avenir, Montserrat, Corbel, URW Gothic, source-sans-pro, sans-serif',
+        color: '#4b382a',
+        marginTop: 20,
+        marginBottom: 6,
+    },
+    subtext: {
+        fontSize: 16,
+        fontWeight: '400',
+        fontFamily: 'Avenir, Montserrat, Corbel, URW Gothic, source-sans-pro, sans-serif',
+        color: '#7a5e47',
+        marginTop: 12,
+    },
+    bellButton: {
+        padding: 10,
+        marginRight: 20,
+    }
 })
