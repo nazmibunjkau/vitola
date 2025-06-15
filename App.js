@@ -5,8 +5,18 @@ import Start from './screens/Start'
 import Home from './screens/Home'
 import Register from './screens/Register'
 import Login from './screens/Login'
-import TermsAndConditions from './screens/TermsAndConditions'
+import TermsAndConditions from './components/TermsAndConditions'
+import BottomTabs from './navigation/BottomTabs';
 import useAuth from './hooks/useAuth';
+import AccountInfo from './components/AccountInfo';
+import Notifications from './components/Notifications';
+import Appearance from './components/Appearance';
+import DataUsage from './components/DataUsage';
+import Security from './components/Security';
+import Privacy from './components/Privacy';
+import Support from './components/Support';
+import FAQ from './components/FAQ';
+import { ThemeProvider } from './context/ThemeContext';
 
 const Stack = createStackNavigator()
 
@@ -23,22 +33,36 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {user ? (
-          <>
-            <Stack.Screen name='Home' component={Home} />
-            <Stack.Screen name='TermsAndConditions' component={TermsAndConditions} />
-          </>
-        ) : (
-          <>
-            <Stack.Screen name='Start' component={Start} />
-            <Stack.Screen name='Register' component={Register} />
-            <Stack.Screen name='Login' component={Login} />
-            <Stack.Screen name='TermsAndConditions' component={TermsAndConditions} />
-          </>
-        )}
-      </Stack.Navigator>
-    </NavigationContainer>
+    <ThemeProvider>
+      <NavigationContainer>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          {user ? (
+            <>
+              <Stack.Screen
+                name="MainApp"
+                component={BottomTabs}
+                options={{ headerShown: false }}
+              />
+              <Stack.Screen name="AccountInfo" component={AccountInfo} />
+              <Stack.Screen name="Notifications" component={Notifications} />
+              <Stack.Screen name="Appearance" component={Appearance} />
+              <Stack.Screen name="DataUsage" component={DataUsage} />
+              <Stack.Screen name="Security" component={Security} />
+              <Stack.Screen name="Privacy" component={Privacy} />
+              <Stack.Screen name="Support" component={Support} />
+              <Stack.Screen name="FAQ" component={FAQ} />
+              <Stack.Screen name='TermsAndConditions' component={TermsAndConditions} />
+            </>
+          ) : (
+            <>
+              <Stack.Screen name='Start' component={Start} />
+              <Stack.Screen name='Register' component={Register} />
+              <Stack.Screen name='Login' component={Login} />
+              <Stack.Screen name='TermsAndConditions' component={TermsAndConditions} />
+            </>
+          )}
+        </Stack.Navigator>
+      </NavigationContainer>
+    </ThemeProvider>
   );
 }

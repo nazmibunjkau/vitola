@@ -1,12 +1,10 @@
 import React, { useState } from 'react'
-import { useNavigation } from "@react-navigation/native"
 import { View, SafeAreaView, StyleSheet, TouchableOpacity, Image, Text, TextInput, Keyboard, TouchableWithoutFeedback } from "react-native"
 import { ArrowLeftIcon } from "react-native-heroicons/solid"
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../config/firebase';
 
-export default function Login() {
-    const navigation = useNavigation()
+export default function Login({ navigation }) {
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
 

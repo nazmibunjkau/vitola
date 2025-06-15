@@ -2,8 +2,10 @@ import React, { useEffect, useState } from "react"
 import { StyleSheet, SafeAreaView, Text, View, TouchableOpacity } from "react-native"
 import { auth } from "../config/firebase"
 import { Ionicons } from '@expo/vector-icons'
+import { useTheme } from '../context/ThemeContext';
 
 export default function Home() {
+    const { theme } = useTheme();
     const [firstName, setFirstName] = useState("")
 
     useEffect(() => {
@@ -19,14 +21,14 @@ export default function Home() {
         fetchUser();
     }, []);
     return (
-        <SafeAreaView style={styles.container}>
+        <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
             <View style={styles.headerRow}>
                 <View style={styles.textBlock}>
-                    <Text style={styles.greeting}>Hi, {firstName}</Text>
-                    <Text style={styles.subtext}>Welcome Back!</Text>
+                    <Text style={[styles.greeting, { color: theme.text }]}>Hi, {firstName}</Text>
+                    <Text style={[styles.subtext, { color: theme.text }]}>Welcome Back!</Text>
                 </View>
                 <TouchableOpacity style={styles.bellButton} onPress={() => { /* Add notification logic here */ }}>
-                    <Ionicons name="notifications-outline" size={28} color="#4b382a" />
+                    <Ionicons name="notifications-outline" size={28} color={theme.primary} />
                 </TouchableOpacity>
             </View>
         </SafeAreaView>
