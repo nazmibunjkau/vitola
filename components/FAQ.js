@@ -1,11 +1,11 @@
-import { StyleSheet, Text, View } from 'react-native'
+import { StyleSheet, Text, SafeAreaView } from 'react-native'
 import React from 'react'
 
 export default function FAQ() {
   return (
-    <View>
+    <SafeAreaView>
       <Text>FAQ</Text>
-    </View>
+    </SafeAreaView>
   )
 }
 

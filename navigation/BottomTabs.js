@@ -59,13 +59,13 @@ export default function BottomTabs() {
         }}
       />
       <Tab.Screen
-        name="Scanner"
-        component={Scanner}
+        name="Sessions"
+        component={Sessions}
         options={{
           tabBarIcon: ({ focused }) => (
             <View style={styles.icon}>
               <Ionicons
-                name={focused ? 'scan' : 'scan-outline'}
+                name={focused ? 'add-circle' : 'add-circle-outline'}
                 size={24}
                 color={theme.primary}
               />
@@ -75,13 +75,13 @@ export default function BottomTabs() {
         }}
       />
       <Tab.Screen
-        name="Sessions"
-        component={Sessions}
+        name="Scanner"
+        component={Scanner}
         options={{
           tabBarIcon: ({ focused }) => (
             <View style={styles.icon}>
               <Ionicons
-                name={focused ? 'flame' : 'flame-outline'}
+                name={focused ? 'scan' : 'scan-outline'}
                 size={24}
                 color={theme.primary}
               />

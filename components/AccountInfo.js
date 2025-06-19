@@ -1,9 +1,8 @@
-import { View, SafeAreaView, StyleSheet, TouchableOpacity, Image, Text, TextInput, Keyboard, TouchableWithoutFeedback } from "react-native"
+import { View, SafeAreaView, StyleSheet, TouchableOpacity, Text, TextInput, Keyboard, TouchableWithoutFeedback } from "react-native"
 import { ArrowLeftIcon } from "react-native-heroicons/solid"
 import React, { useEffect, useState } from 'react'
 import { auth } from "../config/firebase"
 import { useTheme } from '../context/ThemeContext';
-import firebase from 'firebase/compat/app';
 import { EmailAuthProvider, reauthenticateWithCredential, updatePassword } from 'firebase/auth';
 
 export default function AccountInfo({ navigation }) {

@@ -7,6 +7,8 @@ const lightTheme = {
   text: '#4b382a',
   primary: '#4b382a',
   accent: '#f5f5f5',
+  placeholder: '#a0896f',
+  iconOnPrimary: '#fff',
 };
 
 const darkTheme = {
@@ -14,6 +16,8 @@ const darkTheme = {
   text: '#fff',
   primary: '#fff',
   accent: '#a0896f',
+  placeholder: '#f5f5f5',
+  iconOnPrimary: '#4b382a',
 };
 
 export const ThemeProvider = ({ children }) => {

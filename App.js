@@ -16,13 +16,14 @@ import Security from './components/Security';
 import Privacy from './components/Privacy';
 import Support from './components/Support';
 import FAQ from './components/FAQ';
-import { ThemeProvider } from './context/ThemeContext';
+import HumidorAddition from './utils/HumidorAdditions';
+import NavigationScreen from './utils/NotificationScreen';
+import { ThemeProvider, useTheme } from './context/ThemeContext';
 
 const Stack = createStackNavigator()
 
 export default function App() {
   const { user, loading } = useAuth();
-  console.log("User:", user)
 
   if (loading) {
     return (
@@ -34,35 +35,42 @@ export default function App() {
 
   return (
     <ThemeProvider>
-      <NavigationContainer>
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          {user ? (
-            <>
-              <Stack.Screen
-                name="MainApp"
-                component={BottomTabs}
-                options={{ headerShown: false }}
-              />
-              <Stack.Screen name="AccountInfo" component={AccountInfo} />
-              <Stack.Screen name="Notifications" component={Notifications} />
-              <Stack.Screen name="Appearance" component={Appearance} />
-              <Stack.Screen name="DataUsage" component={DataUsage} />
-              <Stack.Screen name="Security" component={Security} />
-              <Stack.Screen name="Privacy" component={Privacy} />
-              <Stack.Screen name="Support" component={Support} />
-              <Stack.Screen name="FAQ" component={FAQ} />
-              <Stack.Screen name='TermsAndConditions' component={TermsAndConditions} />
-            </>
-          ) : (
-            <>
-              <Stack.Screen name='Start' component={Start} />
-              <Stack.Screen name='Register' component={Register} />
-              <Stack.Screen name='Login' component={Login} />
-              <Stack.Screen name='TermsAndConditions' component={TermsAndConditions} />
-            </>
-          )}
-        </Stack.Navigator>
-      </NavigationContainer>
+      <ThemeConsumer />
     </ThemeProvider>
+  );
+}
+
+function ThemeConsumer() {
+  const theme = useTheme(); // <-- now inside ThemeProvider
+  const { user } = useAuth();
+
+  return (
+    <NavigationContainer>
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        {user ? (
+          <>
+            <Stack.Screen name="MainApp" component={BottomTabs} />
+            <Stack.Screen name="AccountInfo" component={AccountInfo} />
+            <Stack.Screen name="Notifications" component={Notifications} />
+            <Stack.Screen name="Appearance" component={Appearance} />
+            <Stack.Screen name="DataUsage" component={DataUsage} />
+            <Stack.Screen name="Security" component={Security} />
+            <Stack.Screen name="Privacy" component={Privacy} />
+            <Stack.Screen name="Support" component={Support} />
+            <Stack.Screen name="FAQ" component={FAQ} />
+            <Stack.Screen name='TermsAndConditions' component={TermsAndConditions} />
+            <Stack.Screen name='HumidorAdditions' component={HumidorAddition}/>
+            <Stack.Screen name='NotificationScreen' component={NavigationScreen}/>
+          </>
+        ) : (
+          <>
+            <Stack.Screen name='Start' component={Start} />
+            <Stack.Screen name='Register' component={Register} />
+            <Stack.Screen name='Login' component={Login} />
+            <Stack.Screen name='TermsAndConditions' component={TermsAndConditions} />
+          </>
+        )}
+      </Stack.Navigator>
+    </NavigationContainer>
   );
 }

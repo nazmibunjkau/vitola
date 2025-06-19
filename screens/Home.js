@@ -4,7 +4,7 @@ import { auth } from "../config/firebase"
 import { Ionicons } from '@expo/vector-icons'
 import { useTheme } from '../context/ThemeContext';
 
-export default function Home() {
+export default function Home({ navigation }) {
     const { theme } = useTheme();
     const [firstName, setFirstName] = useState("")
 
@@ -27,7 +27,7 @@ export default function Home() {
                     <Text style={[styles.greeting, { color: theme.text }]}>Hi, {firstName}</Text>
                     <Text style={[styles.subtext, { color: theme.text }]}>Welcome Back!</Text>
                 </View>
-                <TouchableOpacity style={styles.bellButton} onPress={() => { /* Add notification logic here */ }}>
+                <TouchableOpacity style={styles.bellButton} onPress={() => navigation.navigate('NotificationScreen')}>
                     <Ionicons name="notifications-outline" size={28} color={theme.primary} />
                 </TouchableOpacity>
             </View>
