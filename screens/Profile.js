@@ -64,25 +64,27 @@ export default function Profile({ navigation }) {
       <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
         <Text style={[styles.greeting, {color: theme.primary}]}>{fullName}</Text>
         <Text style={[styles.email, {color: theme.primary}]}>{emailAddress}</Text>
-        <View style={[styles.optionBox, {backgroundColor: theme.accent}]}>
-          {[
-            { label: "Account Information", icon: "person-outline" },
-            { label: "Notifications", icon: "notifications-outline" },
-            { label: "App Appearance", icon: "color-palette-outline" },
-            { label: "Data Usage", icon: "cloud-outline" },
-            { label: "Security", icon: "shield-checkmark-outline" },
-            { label: "Privacy", icon: "lock-closed-outline" },
-            { label: "Support", icon: "help-circle-outline" },
-            { label: "FAQ", icon: "help-buoy-outline" },
-          ].map(({ label, icon }) => (
-            <TouchableOpacity key={label} style={styles.optionRow} onPress={() => handleOptionPress(label)}>
-              <View style={styles.rowLeft}>
-                <Ionicons name={icon} size={20} color={theme.primary} style={styles.optionIcon} />
-                <Text style={[styles.optionLabel, {color: theme.primary}]}>{label}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color={theme.primary} />
-            </TouchableOpacity>
-          ))}
+        <View style={{ flex: 1, justifyContent: 'center' }}>
+          <View style={[styles.optionBox, {backgroundColor: theme.accent}]}>
+            {[
+              { label: "Account Information", icon: "person-outline" },
+              { label: "Notifications", icon: "notifications-outline" },
+              { label: "App Appearance", icon: "color-palette-outline" },
+              { label: "Data Usage", icon: "cloud-outline" },
+              { label: "Security", icon: "shield-checkmark-outline" },
+              { label: "Privacy", icon: "lock-closed-outline" },
+              { label: "Support", icon: "help-circle-outline" },
+              { label: "FAQ", icon: "help-buoy-outline" },
+            ].map(({ label, icon }) => (
+              <TouchableOpacity key={label} style={styles.optionRow} onPress={() => handleOptionPress(label)}>
+                <View style={styles.rowLeft}>
+                  <Ionicons name={icon} size={20} color={theme.primary} style={styles.optionIcon} />
+                  <Text style={[styles.optionLabel, {color: theme.primary}]}>{label}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={theme.primary} />
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
       </SafeAreaView>
       <TouchableOpacity style={[styles.logoutButton, {backgroundColor: theme.primary}]}
@@ -127,7 +129,6 @@ const styles = StyleSheet.create({
     },
     optionBox: {
       borderRadius: 16,
-      marginVertical: 30,
       marginHorizontal: 20,
       paddingVertical: 10,
     },

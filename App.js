@@ -19,6 +19,9 @@ import FAQ from './components/FAQ';
 import HumidorAddition from './utils/HumidorAdditions';
 import NavigationScreen from './utils/NotificationScreen';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
+import Search from './components/Search';
+import Scanner from './screens/Scanner';
+import CigarDetails from './screens/CigarDetails'
 
 const Stack = createStackNavigator()
 
@@ -61,6 +64,9 @@ function ThemeConsumer() {
             <Stack.Screen name='TermsAndConditions' component={TermsAndConditions} />
             <Stack.Screen name='HumidorAdditions' component={HumidorAddition}/>
             <Stack.Screen name='NotificationScreen' component={NavigationScreen}/>
+            <Stack.Screen name='Search' component={Search} />
+            <Stack.Screen name='Scanner' component={Scanner} />
+            <Stack.Screen name='CigarDetails' component={CigarDetails} />
           </>
         ) : (
           <>

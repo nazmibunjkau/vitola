@@ -1,0 +1,257 @@
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, Text, View, TextInput, FlatList, TouchableOpacity, Image, ActivityIndicator, Keyboard, TouchableWithoutFeedback } from 'react-native';
+import { query, collection, getDocs, orderBy, startAt, endAt, where } from 'firebase/firestore';
+import { db } from '../config/firebase';
+import { useNavigation } from '@react-navigation/native';
+import { Ionicons, MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export default function Search() {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [allCigars, setAllCigars] = useState([]);
+  const [recentSearches, setRecentSearches] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const navigation = useNavigation();
+
+  const topSearches = ['Arturo Fuente', 'Padron', 'Montecristo', 'Oliva', 'Rocky Patel'];
+
+  useEffect(() => {
+    const fetchFilteredCigars = async () => {
+      if (searchQuery.trim().length === 0) {
+        setAllCigars([]);
+        return;
+      }
+
+      setLoading(true);
+      const cigarsCol = collection(db, 'cigars');
+      const q = query(
+        cigarsCol,
+        orderBy('name_insensitive'),
+        startAt(searchQuery.toLowerCase()),
+        endAt(searchQuery.toLowerCase() + '\uf8ff')
+      );
+
+      const cigarsSnapshot = await getDocs(q);
+      const cigarsList = cigarsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAllCigars(cigarsList);
+      setLoading(false);
+    };
+
+    fetchFilteredCigars();
+  }, [searchQuery]);
+
+  useEffect(() => {
+    const loadRecent = async () => {
+      const stored = await AsyncStorage.getItem('recentSearches');
+      if (stored) {
+        setRecentSearches(JSON.parse(stored));
+      }
+    };
+    loadRecent();
+  }, []);
+
+  const handleSelectCigar = async (cigar) => {
+    let fullCigar = cigar;
+
+    // If only the name is passed, fetch full cigar data
+    if (!cigar.image_url || !cigar.brand) {
+      const cigarsCol = collection(db, 'cigars');
+      const q = query(cigarsCol, where('name_insensitive', '==', cigar.name.toLowerCase()));
+      const cigarsSnapshot = await getDocs(q);
+      if (cigarsSnapshot.empty) return;
+      const match = cigarsSnapshot.docs[0].data();
+      fullCigar = match;
+    }
+
+    const updated = [fullCigar.name, ...recentSearches.filter(t => t !== fullCigar.name)].slice(0, 5);
+    setRecentSearches(updated);
+    await AsyncStorage.setItem('recentSearches', JSON.stringify(updated));
+    navigation.navigate('CigarDetails', { cigar: fullCigar });
+  };
+
+  const renderCigar = ({ item }) => (
+    <TouchableOpacity style={styles.item} onPress={() => handleSelectCigar(item)}>
+      <Image source={{ uri: item.image_url }} style={styles.image} />
+      <View style={styles.textContainer}>
+        <Text style={styles.title}>{item.name}</Text>
+        <Text style={styles.subtitle}>{item.brand}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+
+  return (
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+      <View style={styles.container}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Ionicons name="arrow-back" size={30} color="#3e3024" />
+        </TouchableOpacity>
+        <View style={styles.searchInputWrapper}>
+          <Ionicons name="search" size={20} color="#7a6e63" style={styles.searchIcon} />
+          <TextInput
+            style={styles.input}
+            placeholder="Search for a cigar..."
+            onChangeText={setSearchQuery}
+            value={searchQuery}
+            onSubmitEditing={() => Keyboard.dismiss()}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearIcon}>
+              <Ionicons name="close-circle" size={20} color="#B71C1C" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {searchQuery.trim().length === 0 && allCigars.length === 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Top Searches</Text>
+            {topSearches.map((brand, idx) => (
+              <View style={styles.searchRow} key={idx}>
+                <MaterialCommunityIcons name="fire" size={24} color="#e25822" style={{ marginRight: 8 }} />
+                <Text style={[styles.subtitle, { fontSize: 16 }]}>{brand}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {searchQuery.trim().length === 0 && allCigars.length === 0 && recentSearches.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.recentHeader}>
+              <Text style={styles.sectionTitle}>Recent</Text>
+              <TouchableOpacity
+                onPress={async () => {
+                  await AsyncStorage.removeItem('recentSearches');
+                  setRecentSearches([]);
+                }}
+              >
+                <Text style={styles.clearText}>CLEAR</Text>
+              </TouchableOpacity>
+            </View>
+            {recentSearches.map((term, idx) => (
+              <TouchableOpacity
+                key={idx}
+                style={styles.searchRow}
+                onPress={() => handleSelectCigar({ name: term })}
+              >
+                <FontAwesome name="history" size={22} color="#7a6e63" style={{ marginRight: 8 }} />
+                <Text style={[styles.subtitle, { fontSize: 16 }]}>{term}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
+        {loading && (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 20 }}>
+            <ActivityIndicator size="large" color="#7a6e63" />
+          </View>
+        )}
+
+        <FlatList
+          data={allCigars}
+          keyExtractor={(item) => item.id}
+          renderItem={renderCigar}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={() => Keyboard.dismiss()}
+        />
+      </View>
+    </TouchableWithoutFeedback>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    padding: 16,
+    backgroundColor: '#f9f6f1',
+  },
+  backButton: {
+    position: 'absolute',
+    top: 60,
+    left: 16,
+    zIndex: 1,
+  },
+  searchInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderColor: '#b09e88',
+    borderWidth: 1,
+    borderRadius: 8,
+    marginTop: 100,
+    marginBottom: 20,
+    backgroundColor: '#fff',
+    paddingRight: 8,
+  },
+  input: {
+    height: 50,
+    flex: 1,
+    paddingHorizontal: 12,
+    paddingLeft: 0,
+  },
+  clearIcon: {
+    paddingHorizontal: 4,
+  },
+  item: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    marginBottom: 8,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  image: {
+    width: 50,
+    height: 50,
+    borderRadius: 6,
+    marginRight: 10,
+  },
+  textContainer: {
+    flex: 1,
+  },
+  title: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#3e3024',
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#7a6e63',
+  },
+  section: {
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#3e3024',
+    marginBottom: 8,
+  },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingLeft: 6,
+    paddingVertical: 6, // Added for better spacing
+  },
+  recentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  clearText: {
+    color: '#a94442',
+    fontSize: 14,
+    marginRight: 8,
+  },
+  searchIcon: {
+    marginLeft: 10,
+    marginRight: 6,
+  },
+});
