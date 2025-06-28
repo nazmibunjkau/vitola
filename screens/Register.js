@@ -3,7 +3,17 @@ import { useNavigation } from "@react-navigation/native"
 import { View, SafeAreaView, StyleSheet, TouchableOpacity, Image, Text, TextInput, Keyboard, TouchableWithoutFeedback } from "react-native"
 import { ArrowLeftIcon, CheckIcon } from "react-native-heroicons/solid"
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { getFirestore, doc, setDoc } from 'firebase/firestore';
 import { auth } from '../config/firebase';
+
+const db = getFirestore();
+
+const capitalizeName = (text) => {
+  return text
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+};
 
 export default function Register({}) {
     const navigation = useNavigation()
@@ -15,16 +25,29 @@ export default function Register({}) {
     const handleSubmit = async () => {
         if (name && email && password) {
             try {
-            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-            await updateProfile(userCredential.user, { displayName: name });
+                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                await updateProfile(userCredential.user, { displayName: name });
+                await auth.currentUser.reload();
 
-            await auth.currentUser.reload(); 
-            } catch (error) {
-            console.error("Error during registration:", error);
-            alert(`Registration failed: ${error.message}`);
+                try {
+                    await setDoc(doc(db, 'users', userCredential.user.uid), {
+                    email: userCredential.user.email,
+                    name: name,
+                    createdAt: new Date(),
+                    });
+                    console.log("User document successfully written!");
+                } catch (firestoreError) {
+                    console.error("Firestore write error:", firestoreError);
+                    alert(`User created but failed to save profile data: ${firestoreError.message}`);
+                }
+            }  catch (error) {
+                console.error("Authentication or profile update error:", error);
+                alert(`Registration failed: ${error.message}`);
             }
-        }
-    }
+        } else {
+            alert("Please fill all fields.");
+        }; 
+    };
     return (
         <TouchableWithoutFeedback onPress={Keyboard.dismiss} accesible={false}>
             <View style={styles.container}>
@@ -45,7 +68,7 @@ export default function Register({}) {
                         <TextInput 
                             style={styles.input} 
                             value={name}
-                            onChangeText={value => setName(value)}
+                            onChangeText={value => setName(capitalizeName(value))}
                             placeholder="Enter Name" 
                             placeholderTextColor='#999'>
                         </TextInput>

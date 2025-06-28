@@ -5,6 +5,7 @@ import { db } from '../config/firebase';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons, MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRoute } from '@react-navigation/native';
 
 export default function Search() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -12,6 +13,8 @@ export default function Search() {
   const [recentSearches, setRecentSearches] = useState([]);
   const [loading, setLoading] = useState(false);
   const navigation = useNavigation();
+  const route = useRoute();
+  const { humidorId, humidorTitle } = route.params || {};
 
   const topSearches = ['Arturo Fuente', 'Padron', 'Montecristo', 'Oliva', 'Rocky Patel'];
 
@@ -66,7 +69,7 @@ export default function Search() {
     const updated = [fullCigar.name, ...recentSearches.filter(t => t !== fullCigar.name)].slice(0, 5);
     setRecentSearches(updated);
     await AsyncStorage.setItem('recentSearches', JSON.stringify(updated));
-    navigation.navigate('CigarDetails', { cigar: fullCigar });
+    navigation.navigate('CigarDetails', { cigar: fullCigar, humidorId, humidorTitle });
   };
 
   const renderCigar = ({ item }) => (

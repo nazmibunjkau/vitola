@@ -16,12 +16,13 @@ import Security from './components/Security';
 import Privacy from './components/Privacy';
 import Support from './components/Support';
 import FAQ from './components/FAQ';
-import HumidorAddition from './utils/HumidorAdditions';
-import NavigationScreen from './utils/NotificationScreen';
+import HumidorAddition from './components/HumidorAdditions';
+import NavigationScreen from './components/NotificationScreen';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
 import Search from './components/Search';
 import Scanner from './screens/Scanner';
 import CigarDetails from './screens/CigarDetails'
+import AppLoader from './screens/AppLoader'
 
 const Stack = createStackNavigator()
 
@@ -44,7 +45,7 @@ export default function App() {
 }
 
 function ThemeConsumer() {
-  const theme = useTheme(); // <-- now inside ThemeProvider
+  const theme = useTheme();
   const { user } = useAuth();
 
   return (
@@ -52,6 +53,7 @@ function ThemeConsumer() {
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {user ? (
           <>
+            <Stack.Screen name="AppLoader" component={AppLoader} />
             <Stack.Screen name="MainApp" component={BottomTabs} />
             <Stack.Screen name="AccountInfo" component={AccountInfo} />
             <Stack.Screen name="Notifications" component={Notifications} />

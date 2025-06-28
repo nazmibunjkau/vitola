@@ -9,6 +9,7 @@ import {
   ScrollView,
   Modal,
   Image,
+  Keyboard,
   TouchableWithoutFeedback
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
@@ -29,6 +30,7 @@ export default function SessionAdditions() {
   const [typeModalVisible, setTypeModalVisible] = useState(false)
   const [feelingModalVisible, setFeelingModalVisible] = useState(false)
   const [media, setMedia] = useState(null);
+  const [mediaSize, setMediaSize] = useState({ width: 0, height: 0 });
 
   const [cigarType, setCigarType] = useState('')
   const [sessionFeeling, setSessionFeeling] = useState('')
@@ -42,7 +44,16 @@ export default function SessionAdditions() {
   }
 
   const handleDiscard = () => {
-    navigation.goBack()
+    setTitle('');
+    setDescription('');
+    setMedia(null);
+    setMediaSize({ width: 0, height: 0 });
+    setCigarType('');
+    setSessionFeeling('');
+    setPrivateNotes('');
+    setGearUsed('');
+    setDrinkPairing('');
+    navigation.goBack();
   }
 
   const handlePickMedia = async () => {
@@ -59,189 +70,210 @@ export default function SessionAdditions() {
     });
 
     if (!result.canceled) {
-      setMedia(result.assets[0].uri);
-      console.log('Selected media:', result.assets[0].uri);
+      const uri = result.assets[0].uri;
+      setMedia(uri);
+      Image.getSize(uri, (width, height) => {
+        setMediaSize({ width, height });
+      }, error => {
+        console.error("Error getting image size:", error);
+        setMediaSize({ width: 0, height: 0 }); // fallback
+      });
+      console.log('Selected media:', uri);
     }
   };
 
   const borderColorValue = theme.primary;
+  const screenWidth = 320; // or use Dimensions.get('window').width - padding
+  const imageAspectRatio = mediaSize.width && mediaSize.height ? mediaSize.height / mediaSize.width : 0.75;
+  const mediaBoxHeight = screenWidth * imageAspectRatio;
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
-      <View style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={styles.content}>
-          <View style={[styles.header, { borderBottomColor: borderColorValue }]}>
-            <Text style={[styles.headerTitle, { color: theme.text }]}>Save Session</Text>
-          </View>
-          <TextInput
-            style={[styles.titleInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.text }]}
-            value={title}
-            onChangeText={setTitle}
-            placeholder="e.g. Afternoon Smoke on Patio"
-            placeholderTextColor={theme.placeholder}
-          />
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+      <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
+        <View style={{ flex: 1 }}>
+          <ScrollView contentContainerStyle={styles.content}>
+            <View style={[styles.header, { borderBottomColor: borderColorValue }]}>
+              <Text style={[styles.headerTitle, { color: theme.text }]}>Save Session</Text>
+            </View>
+            <TextInput
+              style={[styles.titleInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.text }]}
+              value={title}
+              onChangeText={setTitle}
+              placeholder="e.g. Afternoon Smoke on Patio"
+              placeholderTextColor={theme.placeholder}
+            />
 
-          <TextInput
-            style={[styles.descriptionInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.text }]}
-            value={description}
-            onChangeText={setDescription}
-            placeholder="Add a description"
-            multiline
-            placeholderTextColor={theme.placeholder}
-          />
+            <TextInput
+              style={[styles.descriptionInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.text }]}
+              value={description}
+              onChangeText={setDescription}
+              placeholder="Add a description"
+              multiline
+              placeholderTextColor={theme.placeholder}
+            />
 
-          <TouchableOpacity style={[styles.mediaBox, { borderColor: theme.primary }]} onPress={handlePickMedia}>
-            {media ? (
-              <Image
-                source={{ uri: media }}
-                style={{ width: '100%', height: '100%', borderRadius: 8 }}
-                resizeMode="cover"
-              />
-            ) : (
-              <Text style={[styles.mediaText, { color: theme.text }]}>+ Add Photos / Video</Text>
-            )}
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.mediaBox,
+                {
+                  borderColor: theme.primary,
+                  height: media ? mediaBoxHeight : styles.mediaBox.height
+                }
+              ]}
+              onPress={handlePickMedia}
+            >
+              {media ? (
+                <Image
+                  source={{ uri: media }}
+                  style={{ width: '100%', height: '100%', borderRadius: 8 }}
+                  resizeMode="cover"
+                />
+              ) : (
+                <Text style={[styles.mediaText, { color: theme.text }]}>+ Add Photos / Video</Text>
+              )}
+            </TouchableOpacity>
 
-          <Text style={[styles.sectionHeader, { color: theme.text }]}>Details</Text>
+            <Text style={[styles.sectionHeader, { color: theme.text }]}>Details</Text>
 
-          <TouchableOpacity style={[styles.selector, { borderColor: borderColorValue }]} onPress={() => setTypeModalVisible(true)}>
-            <View style={styles.selectorRow}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Ionicons name="leaf-outline" size={18} color={theme.placeholder} style={styles.selectorIcon} />
-                <Text style={[
+            <TouchableOpacity style={[styles.selector, { borderColor: borderColorValue }]} onPress={() => setTypeModalVisible(true)}>
+              <View style={styles.selectorRow}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="leaf-outline" size={18} color={theme.placeholder} style={styles.selectorIcon} />
+                  <Text style={[
+                      styles.selectorValue,
+                      { color: cigarType ? theme.text : theme.placeholder, textAlign: 'left' }
+                      ]}>
+                      {cigarType || 'Cigar'}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-down" size={18} color={theme.text} />
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.selector, { borderColor: borderColorValue }]} onPress={() => setFeelingModalVisible(true)}>
+              <View style={styles.selectorRow}>
+                <View style={{ flexDirection: 'row', alignItems: 'center'}}>
+                  <Ionicons name="happy-outline" size={18} color={theme.placeholder} style={styles.selectorIcon} />
+                  <Text style={[
                     styles.selectorValue,
-                    { color: cigarType ? theme.text : theme.placeholder, textAlign: 'left' }
-                    ]}>
-                    {cigarType || 'Cigar'}
-                </Text>
+                    { color: sessionFeeling ? theme.text : theme.placeholder, textAlign: 'left' }
+                  ]}>{sessionFeeling || 'Session Feel'}</Text>
+                </View>
+                <Ionicons name="chevron-down" size={18} color={theme.text} />
               </View>
-              <Ionicons name="chevron-down" size={18} color={theme.text} />
-            </View>
-          </TouchableOpacity>
+            </TouchableOpacity>
 
-          <TouchableOpacity style={[styles.selector, { borderColor: borderColorValue }]} onPress={() => setFeelingModalVisible(true)}>
-            <View style={styles.selectorRow}>
-              <View style={{ flexDirection: 'row', alignItems: 'center'}}>
-                <Ionicons name="happy-outline" size={18} color={theme.placeholder} style={styles.selectorIcon} />
-                <Text style={[
-                  styles.selectorValue,
-                  { color: sessionFeeling ? theme.text : theme.placeholder, textAlign: 'left' }
-                ]}>{sessionFeeling || 'Session Feel'}</Text>
-              </View>
-              <Ionicons name="chevron-down" size={18} color={theme.text} />
-            </View>
-          </TouchableOpacity>
+            <Text style={[styles.selectorLabel, { color: theme.text }]}>Private Notes</Text>
+            <TextInput
+              style={[styles.notesInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.text }]}
+              value={privateNotes}
+              onChangeText={setPrivateNotes}
+              placeholder="Any private notes"
+              multiline
+              placeholderTextColor={theme.placeholder}
+            />
 
-          <Text style={[styles.selectorLabel, { color: theme.text }]}>Private Notes</Text>
-          <TextInput
-            style={[styles.notesInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.text }]}
-            value={privateNotes}
-            onChangeText={setPrivateNotes}
-            placeholder="Any private notes"
-            multiline
-            placeholderTextColor={theme.placeholder}
-          />
+            <Text style={[styles.selectorLabel, { color: theme.text }]}>Accessories / Gear Used</Text>
+            <TextInput
+              style={[styles.gearInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.text }]}
+              value={gearUsed}
+              onChangeText={setGearUsed}
+              placeholder="e.g. Lighter, Cutter, Ashtray"
+              placeholderTextColor={theme.placeholder}
+            />
+            <Text style={[styles.selectorLabel, { color: theme.text }]}>Drink Pairing</Text>
+            <TextInput
+              style={[styles.gearInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.text }]}
+              value={drinkPairing}
+              onChangeText={setDrinkPairing}
+              placeholder="e.g. Whiskey, Coffee, Water"
+              placeholderTextColor={theme.placeholder}
+            />
 
-          <Text style={[styles.selectorLabel, { color: theme.text }]}>Accessories / Gear Used</Text>
-          <TextInput
-            style={[styles.gearInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.text }]}
-            value={gearUsed}
-            onChangeText={setGearUsed}
-            placeholder="e.g. Lighter, Cutter, Ashtray"
-            placeholderTextColor={theme.placeholder}
-          />
-          <Text style={[styles.selectorLabel, { color: theme.text }]}>Drink Pairing</Text>
-          <TextInput
-            style={[styles.gearInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.text }]}
-            value={drinkPairing}
-            onChangeText={setDrinkPairing}
-            placeholder="e.g. Whiskey, Coffee, Water"
-            placeholderTextColor={theme.placeholder}
-          />
+            <TouchableOpacity onPress={handleDiscard} style={styles.discardButton}>
+              <Text style={[styles.discardText, { color: theme.primary }]}>Discard Session</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity onPress={handleDiscard} style={styles.discardButton}>
-            <Text style={[styles.discardText, { color: theme.primary }]}>Discard Session</Text>
-          </TouchableOpacity>
+            {/* Spacer so content doesn't get hidden under fixed button */}
+            <View style={{ height: 80 }} />
 
-          {/* Spacer so content doesn't get hidden under fixed button */}
-          <View style={{ height: 80 }} />
+            {/* Modals */}
+            <Modal visible={typeModalVisible} animationType="slide" transparent>
+              <TouchableWithoutFeedback onPress={() => setTypeModalVisible(false)}>
+                <View style={styles.modalOverlay}>
+                  <TouchableWithoutFeedback>
+                    <View style={[styles.bottomSheet, { backgroundColor: theme.background }]}>
+                        <Text style={[styles.bottomSheetTitle, { color: theme.text }]}>Choose Cigar Type</Text>
+                        {cigarTypes.map((item) => (
+                        <TouchableOpacity
+                            key={item}
+                            style={styles.optionRow}
+                            onPress={() => {
+                              if (item === cigarType) {
+                                setCigarType('')
+                              } else {
+                                setCigarType(item)
+                              }
+                              setTypeModalVisible(false)
+                            }}
+                        >
+                            <Ionicons
+                            name={item === cigarType ? 'radio-button-on' : 'radio-button-off'}
+                            size={20}
+                            color={theme.primary}
+                            style={{ marginRight: 10 }}
+                            />
+                            <Text style={[styles.modalText, { color: theme.text }]}>{item}</Text>
+                        </TouchableOpacity>
+                        ))}
+                    </View>
+                  </TouchableWithoutFeedback>
+                </View>
+              </TouchableWithoutFeedback>
+            </Modal>
 
-          {/* Modals */}
-          <Modal visible={typeModalVisible} animationType="slide" transparent>
-            <TouchableWithoutFeedback onPress={() => setTypeModalVisible(false)}>
-              <View style={styles.modalOverlay}>
-                <TouchableWithoutFeedback>
-                  <View style={[styles.bottomSheet, { backgroundColor: theme.background }]}>
-                      <Text style={[styles.bottomSheetTitle, { color: theme.text }]}>Choose Cigar Type</Text>
-                      {cigarTypes.map((item) => (
-                      <TouchableOpacity
+            <Modal visible={feelingModalVisible} animationType="slide" transparent>
+              <TouchableWithoutFeedback onPress={() => setFeelingModalVisible(false)}>
+                <View style={styles.modalOverlay}>
+                  <TouchableWithoutFeedback>
+                    <View style={[styles.bottomSheet, { backgroundColor: theme.background }]}>
+                      <Text style={[styles.bottomSheetTitle, { color: theme.text }]}>Choose Session Feel</Text>
+                      {sessionFeelings.map((item) => (
+                        <TouchableOpacity
                           key={item}
                           style={styles.optionRow}
                           onPress={() => {
-                            if (item === cigarType) {
-                              setCigarType('')
+                            if (item === sessionFeeling) {
+                              setSessionFeeling('')
                             } else {
-                              setCigarType(item)
+                              setSessionFeeling(item)
                             }
-                            setTypeModalVisible(false)
+                            setFeelingModalVisible(false)
                           }}
-                      >
+                        >
                           <Ionicons
-                          name={item === cigarType ? 'radio-button-on' : 'radio-button-off'}
-                          size={20}
-                          color={theme.primary}
-                          style={{ marginRight: 10 }}
+                            name={item === sessionFeeling ? 'radio-button-on' : 'radio-button-off'}
+                            size={20}
+                            color={theme.primary}
+                            style={{ marginRight: 10 }}
                           />
                           <Text style={[styles.modalText, { color: theme.text }]}>{item}</Text>
-                      </TouchableOpacity>
+                        </TouchableOpacity>
                       ))}
-                  </View>
-                </TouchableWithoutFeedback>
-              </View>
-            </TouchableWithoutFeedback>
-          </Modal>
-
-          <Modal visible={feelingModalVisible} animationType="slide" transparent>
-            <TouchableWithoutFeedback onPress={() => setFeelingModalVisible(false)}>
-              <View style={styles.modalOverlay}>
-                <TouchableWithoutFeedback>
-                  <View style={[styles.bottomSheet, { backgroundColor: theme.background }]}>
-                    <Text style={[styles.bottomSheetTitle, { color: theme.text }]}>Choose Session Feel</Text>
-                    {sessionFeelings.map((item) => (
-                      <TouchableOpacity
-                        key={item}
-                        style={styles.optionRow}
-                        onPress={() => {
-                          if (item === sessionFeeling) {
-                            setSessionFeeling('')
-                          } else {
-                            setSessionFeeling(item)
-                          }
-                          setFeelingModalVisible(false)
-                        }}
-                      >
-                        <Ionicons
-                          name={item === sessionFeeling ? 'radio-button-on' : 'radio-button-off'}
-                          size={20}
-                          color={theme.primary}
-                          style={{ marginRight: 10 }}
-                        />
-                        <Text style={[styles.modalText, { color: theme.text }]}>{item}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </TouchableWithoutFeedback>
-              </View>
-            </TouchableWithoutFeedback>
-          </Modal>
-        </ScrollView>
-        <View style={[styles.fixedBottomButton, { backgroundColor: theme.background, borderTopColor: theme.placeholder }]}>
-          <TouchableOpacity style={[styles.saveButton, { backgroundColor: theme.primary }]} onPress={handleSave}>
-            <Text style={[styles.saveText, { color: theme.background }]}>Save Session</Text>
-          </TouchableOpacity>
+                    </View>
+                  </TouchableWithoutFeedback>
+                </View>
+              </TouchableWithoutFeedback>
+            </Modal>
+          </ScrollView>
+          <View style={[styles.fixedBottomButton, { backgroundColor: theme.background, borderTopColor: theme.placeholder }]}>
+            <TouchableOpacity style={[styles.saveButton, { backgroundColor: theme.primary }]} onPress={handleSave}>
+              <Text style={[styles.saveText, { color: theme.background }]}>Save Session</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
-    </SafeAreaView>
+      </SafeAreaView>
+    </TouchableWithoutFeedback>
   )
 }
 
@@ -343,7 +375,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderStyle: 'dashed',
     borderRadius: 8,
-    height: 100,
+    height: 200,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 24,

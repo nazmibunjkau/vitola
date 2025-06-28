@@ -1,24 +1,41 @@
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useState, useRef } from "react"
 import { StyleSheet, SafeAreaView, Text, View, TouchableOpacity } from "react-native"
 import { auth } from "../config/firebase"
+import { onAuthStateChanged } from 'firebase/auth';
 import { Ionicons } from '@expo/vector-icons'
 import { useTheme } from '../context/ThemeContext';
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../config/firebase";
 
 export default function Home({ navigation }) {
     const { theme } = useTheme();
     const [firstName, setFirstName] = useState("")
+    const isFirstLoad = useRef(true);
 
     useEffect(() => {
-        const fetchUser = async () => {
-            const user = auth.currentUser;
-            if (user) {
-                await user.reload();
-                const name = user.displayName || "User";
-                const first = name.split(" ")[0];
-                setFirstName(first);
+      const unsubscribe = onAuthStateChanged(auth, async (user) => {
+        if (user) {
+          if (isFirstLoad.current) {
+            // First time: fetch from Firestore
+            const docRef = doc(db, "users", user.uid);
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+              const data = docSnap.data();
+              const name = data.name || user.displayName || "User";
+              setFirstName(name.split(' ')[0]);
+            } else {
+              setFirstName(user.displayName?.split(' ')[0] || "User");
             }
-        };
-        fetchUser();
+            isFirstLoad.current = false;
+          } else {
+            // Subsequent times: use auth.currentUser.displayName
+            setFirstName(user.displayName?.split(' ')[0] || "User");
+          }
+        } else {
+          setFirstName("User");
+        }
+      });
+      return () => unsubscribe();
     }, []);
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>

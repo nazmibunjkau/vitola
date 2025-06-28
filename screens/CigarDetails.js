@@ -7,23 +7,79 @@ import {
   Image,
   ScrollView,
   TouchableOpacity,
+  Modal,
+  FlatList,
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { Share } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
+import { db } from '../config/firebase';
+import { collection, doc, setDoc, addDoc, getDocs } from 'firebase/firestore';
+import useAuth from '../hooks/useAuth';
+import { RadioButton } from 'react-native-paper';
 
 export default function CigarDetails() {
   const route = useRoute();
   const navigation = useNavigation();
-  const { cigar } = route.params || {};
+  const { cigar, humidorId, userId, humidorTitle } = route.params || {};
   const { theme } = useTheme();
+  const { user } = useAuth();
 
   const [selectedSpec, setSelectedSpec] = useState('Manufacturer');
   const [containerWidth, setContainerWidth] = useState(0);
   const [contentWidth, setContentWidth] = useState(0);
   const scrollRef = React.useRef(null);
-  const tabWidth = 95; // approximate width including padding/margin
+  const tabWidth = 95;
+
+  // Humidor selection modal state
+  const [humidorModalVisible, setHumidorModalVisible] = useState(false);
+  const [humidors, setHumidors] = useState([]);
+  const [selectedHumidorId, setSelectedHumidorId] = useState(null);
+
+  // Function to add cigar to selected humidor
+  const handleAddToHumidor = async (humidorId) => {
+    try {
+      const uid = user?.uid;
+      if (!humidorId || !uid) {
+        alert('Humidor or user not found.');
+        return;
+      }
+
+      const cigarId = cigar?.id || cigar?.name?.toLowerCase().replace(/\s+/g, '-');
+      if (!cigarId) {
+        console.error('Cigar ID is missing.');
+        alert('This cigar is missing an ID and cannot be added.');
+        return;
+      }
+      console.log('Adding cigar with ID:', cigarId);
+      const humidorCigarRef = doc(db, 'users', uid, 'humidors', humidorId, 'cigars', cigarId);
+      await setDoc(humidorCigarRef, {
+        ...cigar,
+        id: cigarId,
+        addedAt: new Date().toISOString(),
+      });
+
+      alert('Cigar added to your humidor!');
+    } catch (error) {
+      console.error('Failed to add cigar:', error);
+      alert('Failed to add cigar to humidor.');
+    }
+  };
+
+  // Fetch user's humidors and show modal
+  const fetchHumidors = async () => {
+    if (!user?.uid) return;
+    try {
+      const snapshot = await getDocs(collection(db, 'users', user.uid, 'humidors'));
+      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setHumidors(list);
+      setHumidorModalVisible(true);
+    } catch (error) {
+      console.error('Error fetching humidors:', error);
+      alert('Failed to load humidors.');
+    }
+  };
 
   const handleTabPress = (index, label) => {
     setSelectedSpec(label);
@@ -189,7 +245,7 @@ export default function CigarDetails() {
       flexDirection: 'row',
       alignItems: 'center',
       alignSelf: 'center',
-      backgroundColor: '#B71C1C', // semi-dark red
+      backgroundColor: '#B71C1C',
       paddingVertical: 11,
       paddingHorizontal: 16,
       borderRadius: 30,
@@ -380,7 +436,7 @@ export default function CigarDetails() {
                         'Medium-Full': 3,
                         'Full': 4
                       };
-                      const index = mapping[cigar.strength] ?? 0;
+                      const index = cigar && cigar.strength && mapping[cigar.strength] !== undefined ? mapping[cigar.strength] : 0;
                       const segmentWidth = 120 / levels.length;
                       return index * segmentWidth + (segmentWidth / 2) - 6;
                     })(),
@@ -398,9 +454,13 @@ export default function CigarDetails() {
             ) : (
               <View style={{ paddingHorizontal: 16 }}>
                 {(() => {
-                  const value = cigarSpecs.find(spec => spec.label === selectedSpec)?.value || 'N/A';
-                  return value.includes(',') ? (
-                    value.split(',').map((item, idx) => (
+                  const value = cigarSpecs.find(spec => spec.label === selectedSpec)?.value;
+                  const valueStr = typeof value === 'string' ? value : '';
+                  if (!valueStr) {
+                    return <Text style={{ fontSize: 18, fontWeight: '700', color: theme.text, textAlign: 'center' }}>N/A</Text>;
+                  }
+                  return valueStr.includes(',') ? (
+                    valueStr.split(',').map((item, idx) => (
                       <Text
                         key={idx}
                         style={{
@@ -414,7 +474,9 @@ export default function CigarDetails() {
                       </Text>
                     ))
                   ) : (
-                    <Text style={{ fontSize: 18, fontWeight: 700, color: theme.text, textAlign: 'center' }}>{value}</Text>
+                    <Text style={{ fontSize: 18, fontWeight: 700, color: theme.text, textAlign: 'center' }}>
+                      {valueStr}
+                    </Text>
                   );
                 })()}
               </View>
@@ -423,7 +485,7 @@ export default function CigarDetails() {
         </View>
       </ScrollView>
       <View style={styles.floatingAddButton}>
-        <TouchableOpacity style={styles.actionButton}>
+        <TouchableOpacity style={styles.actionButton} onPress={fetchHumidors}>
           <Ionicons name="add-circle-outline" size={24} color={theme.iconOnPrimary} />
           <Text style={styles.buttonText}>Add to My Humidor</Text>
         </TouchableOpacity>
@@ -432,6 +494,48 @@ export default function CigarDetails() {
           <Text style={styles.buttonText}>Remove from Humidor</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Humidor selection modal */}
+      <Modal visible={humidorModalVisible} transparent animationType="slide">
+        <View style={{ flex: 1, justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <View style={{ backgroundColor: 'white', margin: 20, borderRadius: 10, padding: 20 }}>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 12 }}>Select a Humidor</Text>
+            <FlatList
+              data={humidors}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity onPress={() => setSelectedHumidorId(item.id)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
+                  <RadioButton
+                    value={item.id}
+                    status={selectedHumidorId === item.id ? 'checked' : 'unchecked'}
+                    onPress={() => setSelectedHumidorId(item.id)}
+                  />
+                  <Text>{item.title}</Text>
+                </TouchableOpacity>
+              )}
+            />
+            <TouchableOpacity
+              style={{ marginTop: 20, backgroundColor: '#4b382a', padding: 12, borderRadius: 8 }}
+              onPress={async () => {
+                if (!selectedHumidorId) {
+                  alert('Please select a humidor.');
+                  return;
+                }
+                setHumidorModalVisible(false);
+                await handleAddToHumidor(selectedHumidorId);
+              }}
+            >
+              <Text style={{ color: 'white', textAlign: 'center' }}>Add to Selected Humidor</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ marginTop: 10 }}
+              onPress={() => setHumidorModalVisible(false)}
+            >
+              <Text style={{ textAlign: 'center', color: '#B71C1C' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
