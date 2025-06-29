@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   View,
   Text,
@@ -10,7 +10,8 @@ import {
   Modal,
   Image,
   Keyboard,
-  TouchableWithoutFeedback
+  TouchableWithoutFeedback,
+  Dimensions
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { ArrowLeftIcon } from "react-native-heroicons/solid"
@@ -18,6 +19,9 @@ import { useNavigation } from '@react-navigation/native'
 import { useTheme } from '../context/ThemeContext'
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '../config/firebase';
+import { getAuth } from 'firebase/auth';
 
 const cigarTypes = ['Robusto', 'Toro', 'Churchill', 'Torpedo', 'Gordo']
 const sessionFeelings = ['Relaxing', 'Social', 'Celebratory', 'Reflective', 'Routine']
@@ -37,6 +41,31 @@ export default function SessionAdditions() {
   const [privateNotes, setPrivateNotes] = useState('')
   const [gearUsed, setGearUsed] = useState('')
   const [drinkPairing, setDrinkPairing] = useState('')
+
+  // Humidor state
+  const [humidors, setHumidors] = useState([]);
+  const [selectedHumidor, setSelectedHumidor] = useState(null);
+  const [humidorModalVisible, setHumidorModalVisible] = useState(false);
+
+  useEffect(() => {
+    const fetchHumidors = async () => {
+      try {
+        const auth = getAuth();
+        const userId = auth.currentUser?.uid;
+        if (!userId) {
+          console.warn('User is not logged in');
+          return;
+        }
+        const humidorsRef = collection(db, 'users', userId, 'humidors');
+        const snapshot = await getDocs(humidorsRef);
+        const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setHumidors(list);
+      } catch (error) {
+        console.error('Failed to fetch humidors:', error);
+      }
+    };
+    fetchHumidors();
+  }, []);
 
   const handleSave = () => {
     // Save logic here
@@ -87,6 +116,9 @@ export default function SessionAdditions() {
   const imageAspectRatio = mediaSize.width && mediaSize.height ? mediaSize.height / mediaSize.width : 0.75;
   const mediaBoxHeight = screenWidth * imageAspectRatio;
 
+  // For dynamic modal height
+  const screenHeight = Dimensions.get('window').height;
+
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
       <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
@@ -135,6 +167,28 @@ export default function SessionAdditions() {
 
             <Text style={[styles.sectionHeader, { color: theme.text }]}>Details</Text>
 
+            {/* Humidor Selector */}
+            <TouchableOpacity
+              style={[styles.selector, { borderColor: borderColorValue }]}
+              onPress={() => setHumidorModalVisible(true)}
+            >
+              <View style={styles.selectorRow}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="cube-outline" size={18} color={theme.placeholder} style={styles.selectorIcon} />
+                  <Text
+                    style={[
+                      styles.selectorValue,
+                      { color: selectedHumidor ? theme.text : theme.placeholder, textAlign: 'left' },
+                    ]}
+                  >
+                    {selectedHumidor?.title || 'Select Humidor'}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-down" size={18} color={theme.text} />
+              </View>
+            </TouchableOpacity>
+
+            {/* Cigar Selector */}
             <TouchableOpacity style={[styles.selector, { borderColor: borderColorValue }]} onPress={() => setTypeModalVisible(true)}>
               <View style={styles.selectorRow}>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -191,18 +245,78 @@ export default function SessionAdditions() {
             />
 
             <TouchableOpacity onPress={handleDiscard} style={styles.discardButton}>
-              <Text style={[styles.discardText, { color: theme.primary }]}>Discard Session</Text>
+              <Text style={[styles.discardText, { color: theme.primary }]}>Discard Activity</Text>
             </TouchableOpacity>
-
+                    
             {/* Spacer so content doesn't get hidden under fixed button */}
             <View style={{ height: 80 }} />
 
             {/* Modals */}
+            {/* Humidor Modal */}
+            <Modal visible={humidorModalVisible} animationType="slide" transparent>
+              <TouchableWithoutFeedback onPress={() => setHumidorModalVisible(false)}>
+                <View style={styles.modalOverlay}>
+                  <TouchableWithoutFeedback>
+                    <View
+                      style={[
+                        styles.bottomSheet,
+                        {
+                          backgroundColor: theme.background,
+                          height: Math.min(Math.max(humidors.length * 50, 180), screenHeight * 0.5),
+                        },
+                      ]}
+                    >
+                      {/* Sliver bar for drag indicator */}
+                      <View
+                        style={{
+                          width: 40,
+                          height: 4,
+                          backgroundColor: theme.placeholder,
+                          borderRadius: 2,
+                          alignSelf: 'center',
+                          marginBottom: 12,
+                        }}
+                      />
+                      <Text style={[styles.bottomSheetTitle, { color: theme.text }]}>Choose Humidor</Text>
+                      {humidors.map(item => (
+                        <TouchableOpacity
+                          key={item.id}
+                          style={styles.optionRow}
+                          onPress={() => {
+                            setSelectedHumidor(item);
+                            setHumidorModalVisible(false);
+                          }}
+                        >
+                          <Ionicons
+                            name={selectedHumidor?.id === item.id ? 'radio-button-on' : 'radio-button-off'}
+                            size={20}
+                            color={theme.primary}
+                            style={{ marginRight: 10 }}
+                          />
+                          <Text style={[styles.modalText, { color: theme.text }]}>{item.title}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </TouchableWithoutFeedback>
+                </View>
+              </TouchableWithoutFeedback>
+            </Modal>
             <Modal visible={typeModalVisible} animationType="slide" transparent>
               <TouchableWithoutFeedback onPress={() => setTypeModalVisible(false)}>
                 <View style={styles.modalOverlay}>
                   <TouchableWithoutFeedback>
                     <View style={[styles.bottomSheet, { backgroundColor: theme.background }]}>
+                        {/* Sliver bar for drag indicator */}
+                        <View
+                          style={{
+                            width: 40,
+                            height: 4,
+                            backgroundColor: theme.placeholder,
+                            borderRadius: 2,
+                            alignSelf: 'center',
+                            marginBottom: 12,
+                          }}
+                        />
                         <Text style={[styles.bottomSheetTitle, { color: theme.text }]}>Choose Cigar Type</Text>
                         {cigarTypes.map((item) => (
                         <TouchableOpacity
@@ -237,6 +351,17 @@ export default function SessionAdditions() {
                 <View style={styles.modalOverlay}>
                   <TouchableWithoutFeedback>
                     <View style={[styles.bottomSheet, { backgroundColor: theme.background }]}>
+                      {/* Sliver bar for drag indicator */}
+                      <View
+                        style={{
+                          width: 40,
+                          height: 4,
+                          backgroundColor: theme.placeholder,
+                          borderRadius: 2,
+                          alignSelf: 'center',
+                          marginBottom: 12,
+                        }}
+                      />
                       <Text style={[styles.bottomSheetTitle, { color: theme.text }]}>Choose Session Feel</Text>
                       {sessionFeelings.map((item) => (
                         <TouchableOpacity
@@ -268,7 +393,7 @@ export default function SessionAdditions() {
           </ScrollView>
           <View style={[styles.fixedBottomButton, { backgroundColor: theme.background, borderTopColor: theme.placeholder }]}>
             <TouchableOpacity style={[styles.saveButton, { backgroundColor: theme.primary }]} onPress={handleSave}>
-              <Text style={[styles.saveText, { color: theme.background }]}>Save Session</Text>
+              <Text style={[styles.saveText, { color: theme.background }]}>Save Activity</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -320,7 +445,7 @@ const styles = StyleSheet.create({
   },
   sectionHeader: {
     fontSize: 18,
-    fontWeight: '800',
+    fontWeight: '700',
     marginBottom: 12,
   },
   selector: {
@@ -333,8 +458,8 @@ const styles = StyleSheet.create({
   },
   selectorLabel: {
     fontSize: 18,
-    fontWeight: '800',
-    marginBottom: 6,
+    fontWeight: '700',
+    marginBottom: 14,
     marginTop: 4,
     textAlignVertical: 'center',
   },
@@ -424,28 +549,29 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
   },
   bottomSheet: {
-  position: 'absolute',
-  bottom: 0,
-  left: 0,
-  right: 0,
-  borderTopLeftRadius: 16,
-  borderTopRightRadius: 16,
-  padding: 20,
-  maxHeight: '50%',
-    },
-    bottomSheetTitle: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 20,
+    maxHeight: '50%',
+    height: 300
+  },
+  bottomSheetTitle: {
     fontSize: 16,
     fontWeight: 'bold',
     marginBottom: 12,
-    },
-    optionRow: {
+  },
+  optionRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 12,
-    },
-    modalOverlay: {
-      flex: 1,
-      justifyContent: 'flex-end',
-      backgroundColor: 'rgba(0,0,0,0.1)',
-    },
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.1)',
+  },
 })

@@ -146,6 +146,12 @@ export default function Scanner({ navigation }) {
         />
         <View style={styles.overlay}>
           <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="arrow-back" size={24} color={BROWN} />
+          </TouchableOpacity>
+          <TouchableOpacity
             style={styles.searchIconButton}
             onPress={() => navigation.navigate('Search')}
           >
@@ -309,6 +315,20 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 40,
     right: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: BROWN,
+    zIndex: 10,
+  },
+  backButton: {
+    position: 'absolute',
+    top: 40,
+    left: 20,
     width: 44,
     height: 44,
     borderRadius: 22,

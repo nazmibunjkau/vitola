@@ -5,7 +5,8 @@ import { useTheme } from '../context/ThemeContext';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { db } from '../config/firebase';
-import { deleteDoc, getDoc, getDocs, collection, doc } from 'firebase/firestore';
+import { deleteDoc, getDoc, getDocs, collection, doc, updateDoc } from 'firebase/firestore';
+import { ActionSheetIOS } from 'react-native';
 
 export default function HumidorAdditions() {
   const { theme, isDarkMode } = useTheme();
@@ -23,7 +24,6 @@ export default function HumidorAdditions() {
     origin: null,
     flavored: null,
     strength: null,
-    manufacturer: null,
   });
 
   const [selectedFilterCategory, setSelectedFilterCategory] = useState(null);
@@ -119,21 +119,26 @@ export default function HumidorAdditions() {
         .filter(Boolean)
     ),
   ];
-  const manufacturers = [
+  // Added for Date Added filter
+  const addedDates = [
     ...new Set(
       cigars
-        .flatMap(c => c.manufacturer?.split(',').map(v => v.trim()) || [])
+        .map(c => c.addedAt)
         .filter(Boolean)
+        .map(date => new Date(date).toLocaleDateString())
     ),
   ];
 
   const filteredCigars = cigars.filter(cigar => {
-    return (!activeFilters.brand || cigar.brand === activeFilters.brand)
-      && (!activeFilters.vitola || cigar.vitola === activeFilters.vitola)
-      && (!activeFilters.origin || cigar.origin === activeFilters.origin)
-      && (!activeFilters.flavored || cigar.flavored === activeFilters.flavored)
-      && (!activeFilters.strength || cigar.strength === activeFilters.strength)
-      && (!activeFilters.manufacturer || cigar.manufacturer === activeFilters.manufacturer);
+    const matchesSearch = cigar.name?.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesFilters =
+      (!activeFilters.brand || cigar.brand === activeFilters.brand) &&
+      (!activeFilters.vitola || cigar.vitola === activeFilters.vitola) &&
+      (!activeFilters.origin || cigar.origin === activeFilters.origin) &&
+      (!activeFilters.flavored || cigar.flavored === activeFilters.flavored) &&
+      (!activeFilters.strength || cigar.strength === activeFilters.strength) &&
+      (!activeFilters.addedAt || (cigar.addedAt && new Date(cigar.addedAt).toLocaleDateString() === activeFilters.addedAt));
+    return matchesSearch && matchesFilters;
   });
 
   const toggleFilter = (category, value) => {
@@ -143,8 +148,34 @@ export default function HumidorAdditions() {
     }));
   };
 
+  // Handler for deleting a cigar
+  const handleDeleteCigar = (cigarId) => {
+    Alert.alert(
+      'Delete Cigar',
+      'Are you sure you want to delete this cigar?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const cigarRef = doc(db, 'users', userId, 'humidors', humidorId, 'cigars', cigarId);
+              await deleteDoc(cigarRef);
+              setCigars(prev => prev.filter(cigar => cigar.id !== cigarId));
+            } catch (error) {
+              console.error('Failed to delete cigar:', error);
+              Alert.alert('Error', 'Failed to delete cigar.');
+            }
+          },
+        },
+      ],
+      { cancelable: true }
+    );
+  };
+
   const renderCigar = ({ item }) => (
-    <TouchableOpacity
+    <View
       style={{
         backgroundColor: theme.accent,
         borderColor: theme.primary,
@@ -156,39 +187,62 @@ export default function HumidorAdditions() {
         width: CARD_WIDTH,
         marginHorizontal: 4,
         alignItems: 'center',
+        position: 'relative', // Added for absolute positioning of ellipsis
       }}
-      onPress={() => navigation.navigate('CigarDetails', { cigar: item, humidorId, userId })}
     >
-      {item.image_url && (
-        <Image
-          source={{ uri: item.image_url }}
-          style={{
-            width: 100,
-            height: 100,
-            resizeMode: 'contain',
-            marginBottom: 8,
-          }}
-        />
-      )}
-      <Text style={{ color: theme.text, fontWeight: 'bold', marginBottom: 4, textAlign: 'center' }}>
-        {item.name || 'Unnamed Cigar'}
-      </Text>
-      <Text style={{ color: theme.text, fontSize: 12, textAlign: 'center' }}>
-        {item.manufacturer || 'Unknown Manufacturer'}
-      </Text>
-    </TouchableOpacity>
+      <TouchableOpacity
+        style={{
+          position: 'absolute',
+          top: 6,
+          right: 6,
+          padding: 6,
+          zIndex: 2,
+        }}
+        onPress={() => handleDeleteCigar(item.id)}
+        hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+      >
+        <MaterialCommunityIcons name="dots-vertical" size={24} color={theme.text} />
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={{ alignItems: 'center', width: '100%' }}
+        onPress={() => navigation.navigate('CigarDetails', { cigar: item, humidorId, userId })}
+        activeOpacity={0.8}
+      >
+        {item.image_url && (
+          <Image
+            source={{ uri: item.image_url }}
+            style={{
+              width: 100,
+              height: 100,
+              resizeMode: 'contain',
+              marginBottom: 8,
+            }}
+          />
+        )}
+        <Text style={{ color: theme.text, fontWeight: 'bold', marginBottom: 4, textAlign: 'center' }}>
+          {item.name || 'Unnamed Cigar'}
+        </Text>
+        {item.addedAt && (
+          <Text style={{ color: theme.text, fontSize: 12, marginTop: 4 }}>
+            Date Added: {new Date(item.addedAt).toLocaleDateString()}
+          </Text>
+        )}
+      </TouchableOpacity>
+    </View>
   );
   
   // Update status in Firestore when toggled
   const handleToggleStatus = async () => {
-    const newStatus = !isActive;
-    setIsActive(newStatus);
     if (!humidorId || !userId) return;
+
+    const newStatus = isActive ? 'inactive' : 'active';
+
     try {
       const humidorRef = doc(db, 'users', userId, 'humidors', humidorId);
       await updateDoc(humidorRef, {
-        humidor_status: newStatus ? 'active' : 'inactive',
+        humidor_status: newStatus,
       });
+      setIsActive(newStatus === 'active'); // update local state after saving
     } catch (error) {
       console.error('Failed to update status:', error);
     }
@@ -317,12 +371,12 @@ export default function HumidorAdditions() {
           <TouchableOpacity
             style={[
               styles.statusOverlay,
-              { left: isActive ? '50%' : 0, backgroundColor: isActive ? 'red' : 'green' },
+              { left: isActive ? 0 : '50%', backgroundColor: isActive ? 'green' : 'red' },
             ]}
             onPress={handleToggleStatus}
             activeOpacity={0.8}
           >
-            <Text style={styles.sliderValue}>{isActive ? 'Inactive' : 'Active'}</Text>
+            <Text style={styles.sliderValue}>{isActive ? 'Active' : 'Inactive'}</Text>
           </TouchableOpacity>
           </View>
           {createdDate && (
@@ -347,7 +401,7 @@ export default function HumidorAdditions() {
                   origin: null,
                   flavored: null,
                   strength: null,
-                  manufacturer: null,
+                  addedAt: null,
                 });
                 closePopup();
               }}
@@ -368,11 +422,11 @@ export default function HumidorAdditions() {
           )}
           {[
             { label: 'Brand', category: 'brand' },
+            { label: 'Date Added', category: 'addedAt' },
             { label: 'Size', category: 'vitola' },
             { label: 'Origin', category: 'origin' },
             { label: 'Flavored', category: 'flavored' },
             { label: 'Strength', category: 'strength' },
-            { label: 'Manufacturer', category: 'manufacturer' },
           ].map(({ label, category }) => (
             <TouchableOpacity
               key={category}
@@ -404,7 +458,9 @@ export default function HumidorAdditions() {
           contentContainerStyle={{ flexGrow: 1, paddingBottom: 16 }}
           ListEmptyComponent={
             <Text style={{ color: theme.placeholder, textAlign: 'center' }}>
-              No cigars in this humidor yet.
+              {Object.values(activeFilters).some(val => val)
+                ? 'No results found for this filter.'
+                : 'No cigars in this humidor yet.'}
             </Text>
           }
         />
@@ -456,12 +512,12 @@ export default function HumidorAdditions() {
               elevation: 5,
             }}
           >
-            {(selectedFilterCategory === 'brand' ? brands :
+            {(selectedFilterCategory === 'addedAt' ? addedDates :
+              selectedFilterCategory === 'brand' ? brands :
               selectedFilterCategory === 'vitola' ? vitolas :
               selectedFilterCategory === 'origin' ? origins :
               selectedFilterCategory === 'flavored' ? flavored :
-              selectedFilterCategory === 'strength' ? strengths :
-              manufacturers
+              strengths
             ).map(value => {
               const active = activeFilters[selectedFilterCategory] === value;
               return (

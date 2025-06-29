@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { View, SafeAreaView, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, Alert, Keyboard } from 'react-native'
+import { View, SafeAreaView, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, Alert, Keyboard, TouchableWithoutFeedback } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { useNavigation } from '@react-navigation/native'
 import { useTheme } from '../context/ThemeContext'
@@ -35,6 +35,21 @@ export default function Sessions() {
   const [selectedItems, setSelectedItems] = useState([]);
   const [selectedHumidor, setSelectedHumidor] = useState(null)
 
+  // Sort pop-up state and handlers
+  const [sortPopupVisible, setSortPopupVisible] = useState(false);
+  const [sortPopupPosition, setSortPopupPosition] = useState({ x: 0, y: 0 });
+  const sortButtonRef = useRef(null);
+  // Sort option state
+  const [sortOption, setSortOption] = useState(null);
+  const [sortAscending, setSortAscending] = useState(true);
+
+  const handleSortPress = () => {
+    sortButtonRef.current?.measure((x, y, width, height, pageX, pageY) => {
+      setSortPopupPosition({ x: pageX, y: pageY + height + 6 });
+      setSortPopupVisible(true);
+    });
+  };
+
   useEffect(() => {
     if (!auth.currentUser) return;
 
@@ -43,12 +58,19 @@ export default function Sessions() {
       orderBy('createdAt', 'desc')
     );
 
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+    const unsubscribe = onSnapshot(q, async (querySnapshot) => {
       const humidorsData = [];
       querySnapshot.forEach((doc) => {
         humidorsData.push({ id: doc.id, ...doc.data() });
       });
-      setHumidor(humidorsData);
+      // Enrich each humidor with cigar count
+      const enrichedHumidors = await Promise.all(humidorsData.map(async (h) => {
+      const cigarSnap = await getDocs(collection(db, 'users', auth.currentUser.uid, 'humidors', h.id, 'cigars'));        return {
+          ...h,
+          cigarCount: cigarSnap.docs.filter(doc => !doc.data().placeholder).length,
+        };
+      }));
+      setHumidor(enrichedHumidors);
     });
 
     return () => unsubscribe();
@@ -180,6 +202,11 @@ export default function Sessions() {
               <Text style={[styles.humidorDate, { color: theme.accent }]}>
                 {item.createdAt && item.createdAt.toDate ? format(item.createdAt.toDate(), 'PPP p') : ''}
               </Text>
+              <Text style={{ color: theme.accent, marginTop: 2 }}>
+                {item.cigarCount ?? 0} cigars   ·   <Text style={{ color: item.humidor_status === 'active' ? 'green' : 'red' }}>
+                  {item.humidor_status === 'active' ? 'Active' : 'Inactive'}
+                </Text>
+              </Text>
             </View>
           </View>
           <Ionicons name="chevron-forward" size={24} color={theme.accent} />
@@ -196,7 +223,8 @@ export default function Sessions() {
         </Text>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <TouchableOpacity
-            onPress={() => {}}
+            ref={sortButtonRef}
+            onPress={handleSortPress}
             style={{
               backgroundColor: theme.accent,
               borderRadius: 20,
@@ -206,7 +234,7 @@ export default function Sessions() {
               borderColor: theme.primary,
             }}
           >
-            <Ionicons name="filter" size={18} color={theme.primary} />
+            <Ionicons name="swap-vertical" size={18} color={theme.primary} />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => {
@@ -253,40 +281,19 @@ export default function Sessions() {
           </TouchableOpacity>
         )}
       </View>
-      {humidor.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text style={[styles.emptyText, { color: theme.placeholder }]}>
-            No humidors created yet. Tap + to add one!
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={humidor.filter(h => h.title.toLowerCase().includes(searchQuery.toLowerCase()))}
-          keyExtractor={(item) => item.id}
-          renderItem={renderHumidor}
-          contentContainerStyle={{ paddingTop: 20, paddingBottom: selectionMode && selectedItems.length > 0 ? 220 : 100 }}
-        />
-      )}
-      <TouchableOpacity
-        style={[styles.fab, { backgroundColor: theme.primary }]}
-        onPress={() => setModalVisible(true)}
-      >
-        <Ionicons name="add" size={32} color={theme.iconOnPrimary} />
-      </TouchableOpacity>
 
       {selectionMode && selectedItems.length > 0 && (
         <View style={{
-          position: 'absolute',
-          bottom: 100,
-          left: 16,
-          right: 16,
           flexDirection: 'row',
           justifyContent: 'space-between',
           backgroundColor: theme.accent,
-          paddingVertical: 16,
+          paddingVertical: 12,
           paddingHorizontal: 20,
           borderRadius: 12,
           elevation: 3,
+          marginHorizontal: 16,
+          marginBottom: 10,
+          marginTop: -6,
         }}>
           <TouchableOpacity onPress={() => {
             setSelectedHumidor(selectedItems[0]);
@@ -304,6 +311,47 @@ export default function Sessions() {
           </TouchableOpacity>
         </View>
       )}
+      {humidor.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <Text style={[styles.emptyText, { color: theme.placeholder }]}>
+            No humidors created yet. Tap + to add one!
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={humidor
+            .filter(h => h.title.toLowerCase().includes(searchQuery.toLowerCase()))
+            .sort((a, b) => {
+              if (sortOption === 'Date') {
+                const dateA = a.createdAt?.toDate?.() || new Date(0);
+                const dateB = b.createdAt?.toDate?.() || new Date(0);
+                return sortAscending ? dateA - dateB : dateB - dateA;
+              }
+              if (sortOption === 'Status') {
+                const valA = a.humidor_status === 'active' ? 1 : 0;
+                const valB = b.humidor_status === 'active' ? 1 : 0;
+                return sortAscending ? valB - valA : valA - valB;
+              }
+              if (sortOption === 'Number of Cigars') {
+                return sortAscending
+                  ? (a.cigarCount || 0) - (b.cigarCount || 0)
+                  : (b.cigarCount || 0) - (a.cigarCount || 0);
+              }
+              return 0;
+            })}
+          keyExtractor={(item) => item.id}
+          renderItem={renderHumidor}
+          contentContainerStyle={{ paddingTop: 20, paddingBottom: selectionMode && selectedItems.length > 0 ? 220 : 100 }}
+        />
+      )}
+      <TouchableOpacity
+        style={[styles.fab, { backgroundColor: theme.primary }]}
+        onPress={() => setModalVisible(true)}
+      >
+        <Ionicons name="add" size={32} color={theme.iconOnPrimary} />
+      </TouchableOpacity>
+
+
 
       {/* Add Humidor Modal */}
       <Modal
@@ -334,14 +382,10 @@ export default function Sessions() {
                   }
                   try {
                     // Create the new humidor document
-                    const docRef = await addDoc(collection(db, 'users', auth.currentUser.uid, 'humidors'), {
+                    await addDoc(collection(db, 'users', auth.currentUser.uid, 'humidors'), {
                       title: humidorName.trim(),
                       createdAt: serverTimestamp(),
                       humidor_status: 'active',
-                    });
-                    // Create the humidor_cigars subcollection with a placeholder doc
-                    await addDoc(collection(docRef, 'humidor_cigars'), {
-                      placeholder: true,
                     });
                     setHumidorName('')
                     setModalVisible(false)
@@ -390,6 +434,76 @@ export default function Sessions() {
           </View>
         </View>
       </Modal>
+      {/* Sort Popup */}
+      {sortPopupVisible && (
+        <>
+          <TouchableWithoutFeedback
+            onPress={() => {
+              setSortPopupVisible(false);
+              if (typeof Keyboard !== 'undefined' && Keyboard.dismiss) Keyboard.dismiss();
+            }}
+          >
+            <View
+              style={{
+                position: 'absolute',
+                top: 0,
+                bottom: 0,
+                left: 0,
+                right: 0,
+                zIndex: 9,
+              }}
+              pointerEvents="auto"
+            />
+          </TouchableWithoutFeedback>
+          <View
+            style={{
+              position: 'absolute',
+              top: sortPopupPosition.y,
+              left: sortPopupPosition.x - 19,
+              width: 150,
+              backgroundColor: theme.background,
+              borderRadius: 8,
+              paddingVertical: 8,
+              zIndex: 10,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.3,
+              shadowRadius: 6,
+              elevation: 5,
+            }}
+          >
+            {['Date', 'Number of Cigars', 'Status'].map((option) => (
+              <TouchableOpacity
+                key={option}
+                onPress={() => {
+                  if (sortOption === option) {
+                    setSortAscending(prev => !prev); // toggle direction if same option
+                  } else {
+                    setSortAscending(true); // default to ascending for a new option
+                  }
+                  setSortOption(option);
+                  setSortPopupVisible(false);
+                }}
+                style={{
+                  paddingVertical: 10,
+                  paddingHorizontal: 14,
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Text style={{ color: theme.text, marginRight: 6 }}>{option}</Text>
+                  {sortOption === option && (
+                    <Ionicons
+                      name={sortAscending ? 'arrow-up' : 'arrow-down'}
+                      size={14}
+                      color={theme.text}
+                    />
+                  )}
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </>
+      )}
     </SafeAreaView>
   )
 }

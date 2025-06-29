@@ -9,13 +9,14 @@ import {
   TouchableOpacity,
   Modal,
   FlatList,
+  Alert
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { Share } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { db } from '../config/firebase';
-import { collection, doc, setDoc, addDoc, getDocs } from 'firebase/firestore';
+import { collection, doc, setDoc, addDoc, getDocs, deleteDoc, getDoc } from 'firebase/firestore';
 import useAuth from '../hooks/useAuth';
 import { RadioButton } from 'react-native-paper';
 
@@ -35,7 +36,7 @@ export default function CigarDetails() {
   // Humidor selection modal state
   const [humidorModalVisible, setHumidorModalVisible] = useState(false);
   const [humidors, setHumidors] = useState([]);
-  const [selectedHumidorId, setSelectedHumidorId] = useState(null);
+  const [selectedHumidorIds, setSelectedHumidorIds] = useState([]);
 
   // Function to add cigar to selected humidor
   const handleAddToHumidor = async (humidorId) => {
@@ -54,13 +55,19 @@ export default function CigarDetails() {
       }
       console.log('Adding cigar with ID:', cigarId);
       const humidorCigarRef = doc(db, 'users', uid, 'humidors', humidorId, 'cigars', cigarId);
+      // Check if cigar already exists in the selected humidor
+      const docSnap = await getDoc(humidorCigarRef);
+      if (docSnap.exists()) {
+        Alert.alert('Already Exists', 'This cigar is already in the selected humidor.');
+        return;
+      }
       await setDoc(humidorCigarRef, {
         ...cigar,
         id: cigarId,
         addedAt: new Date().toISOString(),
       });
 
-      alert('Cigar added to your humidor!');
+      Alert.alert('Success', 'Cigar added to your humidor!');
     } catch (error) {
       console.error('Failed to add cigar:', error);
       alert('Failed to add cigar to humidor.');
@@ -489,7 +496,25 @@ export default function CigarDetails() {
           <Ionicons name="add-circle-outline" size={24} color={theme.iconOnPrimary} />
           <Text style={styles.buttonText}>Add to My Humidor</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.removeButton}>
+        <TouchableOpacity
+          style={styles.removeButton}
+          onPress={async () => {
+            try {
+              if (!user?.uid || !humidorId || !cigar?.id) {
+                Alert.alert('Error', 'Missing information to remove cigar.');
+                return;
+              }
+              const cigarId = cigar.id;
+              const cigarRef = doc(db, 'users', user.uid, 'humidors', humidorId, 'cigars', cigarId);
+              await deleteDoc(cigarRef);
+              Alert.alert('Removed', 'Cigar removed from your humidor.');
+              navigation.goBack();
+            } catch (error) {
+              console.error('Failed to remove cigar:', error);
+              Alert.alert('Error', 'Failed to remove cigar from humidor.');
+            }
+          }}
+        >
           <Ionicons name="remove-circle-outline" size={24} color="#fff" />
           <Text style={styles.buttonText}>Remove from Humidor</Text>
         </TouchableOpacity>
@@ -499,30 +524,59 @@ export default function CigarDetails() {
       <Modal visible={humidorModalVisible} transparent animationType="slide">
         <View style={{ flex: 1, justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <View style={{ backgroundColor: 'white', margin: 20, borderRadius: 10, padding: 20 }}>
-            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 12 }}>Select a Humidor</Text>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 12 }}>Select Humidor(s)</Text>
             <FlatList
               data={humidors}
               keyExtractor={(item) => item.id}
-              renderItem={({ item }) => (
-                <TouchableOpacity onPress={() => setSelectedHumidorId(item.id)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
-                  <RadioButton
-                    value={item.id}
-                    status={selectedHumidorId === item.id ? 'checked' : 'unchecked'}
-                    onPress={() => setSelectedHumidorId(item.id)}
-                  />
-                  <Text>{item.title}</Text>
-                </TouchableOpacity>
-              )}
+              renderItem={({ item }) => {
+                const isSelected = selectedHumidorIds.includes(item.id);
+                const toggleSelection = () => {
+                  setSelectedHumidorIds(prev =>
+                    isSelected ? prev.filter(id => id !== item.id) : [...prev, item.id]
+                  );
+                };
+                return (
+                  <TouchableOpacity
+                    onPress={toggleSelection}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      paddingVertical: 8,
+                    }}
+                  >
+                    <View
+                      style={{
+                        height: 20,
+                        width: 20,
+                        borderRadius: 4,
+                        borderWidth: 2,
+                        borderColor: '#4b382a',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginRight: 10,
+                      }}
+                    >
+                      {isSelected && (
+                        <Ionicons name="checkmark" size={16} color="#000" />
+                      )}
+                    </View>
+                    <Text>{item.title}</Text>
+                  </TouchableOpacity>
+                );
+              }}
             />
             <TouchableOpacity
               style={{ marginTop: 20, backgroundColor: '#4b382a', padding: 12, borderRadius: 8 }}
               onPress={async () => {
-                if (!selectedHumidorId) {
-                  alert('Please select a humidor.');
+                if (selectedHumidorIds.length === 0) {
+                  alert('Please select at least one humidor.');
                   return;
                 }
                 setHumidorModalVisible(false);
-                await handleAddToHumidor(selectedHumidorId);
+                for (const id of selectedHumidorIds) {
+                  await handleAddToHumidor(id);
+                }
+                setSelectedHumidorIds([]);
               }}
             >
               <Text style={{ color: 'white', textAlign: 'center' }}>Add to Selected Humidor</Text>
