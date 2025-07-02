@@ -11,19 +11,21 @@ import {
   Image,
   Keyboard,
   TouchableWithoutFeedback,
-  Dimensions
+  Dimensions,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
-import { ArrowLeftIcon } from "react-native-heroicons/solid"
 import { useNavigation } from '@react-navigation/native'
 import { useTheme } from '../context/ThemeContext'
 import * as ImagePicker from 'expo-image-picker';
-import * as MediaLibrary from 'expo-media-library';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { getAuth } from 'firebase/auth';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import Autocomplete from 'react-native-autocomplete-input';
+import cities from '../assets/cities.json';
 
-const cigarTypes = ['Robusto', 'Toro', 'Churchill', 'Torpedo', 'Gordo']
 const sessionFeelings = ['Relaxing', 'Social', 'Celebratory', 'Reflective', 'Routine']
 
 export default function SessionAdditions() {
@@ -35,6 +37,9 @@ export default function SessionAdditions() {
   const [feelingModalVisible, setFeelingModalVisible] = useState(false)
   const [media, setMedia] = useState(null);
   const [mediaSize, setMediaSize] = useState({ width: 0, height: 0 });
+  const [locationQuery, setLocationQuery] = useState('');
+  const [filteredCities, setFilteredCities] = useState([]);
+  const [selectedCity, setSelectedCity] = useState('');
 
   const [cigarType, setCigarType] = useState('')
   const [sessionFeeling, setSessionFeeling] = useState('')
@@ -46,6 +51,8 @@ export default function SessionAdditions() {
   const [humidors, setHumidors] = useState([]);
   const [selectedHumidor, setSelectedHumidor] = useState(null);
   const [humidorModalVisible, setHumidorModalVisible] = useState(false);
+  // Cigars in selected humidor
+  const [humidorCigars, setHumidorCigars] = useState([]);
 
   useEffect(() => {
     const fetchHumidors = async () => {
@@ -67,10 +74,71 @@ export default function SessionAdditions() {
     fetchHumidors();
   }, []);
 
-  const handleSave = () => {
-    // Save logic here
-    navigation.goBack()
-  }
+  const handleCitySearch = (text) => {
+    setLocationQuery(text);
+    const results = cities.filter(city =>
+      city.name.toLowerCase().startsWith(text.toLowerCase())
+    ).slice(0, 10); // limit suggestions
+    setFilteredCities(results);
+  };
+
+  const handleSave = async () => {
+    try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+      if (!user) {
+        alert('User not logged in');
+        return;
+      }
+
+      const activity = {
+        user_id: user.uid,
+        user_name: user.displayName || '',
+        user_email: user.email,
+        date: serverTimestamp(),
+        likes: [],
+        comments: [],
+        title,
+        description,
+        humidor: selectedHumidor?.title || '',
+        humidor_id: selectedHumidor?.id || '',
+        cigar: cigarType,
+        sessionFeeling,
+        privateNotes,
+        gearUsed,
+        drinkPairing,
+        media: media || null,
+        location: selectedCity || locationQuery || '',
+      };
+
+      const docRef = await addDoc(collection(db, 'user_activities'), activity);
+
+      // Clear fields after save
+      setTitle('');
+      setDescription('');
+      setMedia(null);
+      setMediaSize({ width: 0, height: 0 });
+      setCigarType('');
+      setSessionFeeling('');
+      setPrivateNotes('');
+      setGearUsed('');
+      setDrinkPairing('');
+      setSelectedHumidor(null);
+      setHumidorCigars([]);
+      setTypeModalVisible(false);
+      setFeelingModalVisible(false);
+      setLocationQuery('');
+      setSelectedCity('');
+      setFilteredCities([]);
+
+      // Optionally navigate back:
+      navigation.goBack();
+
+    } catch (error) {
+      console.error('Error saving activity:', error);
+      alert('Failed to save activity. Please try again.');
+    }
+  };
 
   const handleDiscard = () => {
     setTitle('');
@@ -82,6 +150,13 @@ export default function SessionAdditions() {
     setPrivateNotes('');
     setGearUsed('');
     setDrinkPairing('');
+    setSelectedHumidor(null);
+    setHumidorCigars([]);
+    setTypeModalVisible(false);
+    setFeelingModalVisible(false);
+    setLocationQuery('');      
+    setSelectedCity('');       
+    setFilteredCities([]);     
     navigation.goBack();
   }
 
@@ -89,7 +164,7 @@ export default function SessionAdditions() {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
       alert('Sorry, we need media library permissions to make this work!');
-      return;
+      return; 
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -100,14 +175,21 @@ export default function SessionAdditions() {
 
     if (!result.canceled) {
       const uri = result.assets[0].uri;
-      setMedia(uri);
-      Image.getSize(uri, (width, height) => {
-        setMediaSize({ width, height });
-      }, error => {
-        console.error("Error getting image size:", error);
-        setMediaSize({ width: 0, height: 0 }); // fallback
-      });
-      console.log('Selected media:', uri);
+
+      // Clear media first to force re-render if same URI is selected again
+      setMedia(null);
+
+      // Small delay to ensure state updates before setting new URI
+      setTimeout(() => {
+        setMedia(uri);
+        Image.getSize(uri, (width, height) => {
+          setMediaSize({ width, height });
+        }, error => {
+          console.error("Error getting image size:", error);
+          setMediaSize({ width: 0, height: 0 }); // fallback
+        });
+        console.log('Selected media:', uri);
+      }, 50);
     }
   };
 
@@ -120,10 +202,18 @@ export default function SessionAdditions() {
   const screenHeight = Dimensions.get('window').height;
 
   return (
-    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-      <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
-        <View style={{ flex: 1 }}>
-          <ScrollView contentContainerStyle={styles.content}>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={{ flex: 1 }}
+    >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+        <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
+          <ScrollView
+            contentContainerStyle={{ flexGrow: 1 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+              <View style={[styles.content, { flex: 1 }]}>
             <View style={[styles.header, { borderBottomColor: borderColorValue }]}>
               <Text style={[styles.headerTitle, { color: theme.text }]}>Save Session</Text>
             </View>
@@ -204,6 +294,99 @@ export default function SessionAdditions() {
               </View>
             </TouchableOpacity>
 
+            <View
+              style={[
+                styles.selector,
+                {
+                  borderColor: borderColorValue,
+                  paddingVertical: 2,
+                  backgroundColor: 'transparent',
+                },
+              ]}
+            >
+              <View style={[styles.selectorRow, { alignItems: 'flex-start' }]}>
+                <Ionicons
+                  name="location-outline"
+                  size={18}
+                  color={theme.placeholder}
+                  style={[styles.selectorIcon, { marginTop: 0 }]}
+                />
+
+                <View style={{ flex: 1, marginTop: -12 }}>
+                  <Autocomplete
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    inputContainerStyle={{
+                      borderWidth: 0,
+                      backgroundColor: 'transparent',
+                      padding: 0,
+                    }}
+                    listContainerStyle={{
+                      backgroundColor: theme.inputBackground,
+                      borderRadius: 8,
+                      marginTop: 6,
+                      maxHeight: 120,
+                      elevation: 4,
+                      shadowColor: '#000',
+                      shadowOffset: { width: 0, height: 2 },
+                      shadowOpacity: 0.15,
+                      shadowRadius: 4,
+                    }}
+                    containerStyle={{
+                      flex: 1,
+                      backgroundColor: 'transparent',
+                    }}
+                    style={{
+                      color: theme.text,
+                      paddingVertical: 6,
+                      fontSize: 14,
+                      backgroundColor: 'transparent',
+                    }}
+                    data={filteredCities}
+                    defaultValue={locationQuery}
+                    onChangeText={(text) => {
+                      handleCitySearch(text);
+                      if (!text) setFilteredCities([]);
+                    }}
+                    placeholder="Type a city"
+                    placeholderTextColor={theme.placeholder}
+                    flatListProps={{
+                      keyboardShouldPersistTaps: 'handled',
+                      keyExtractor: (_, idx) => idx.toString(),
+                      renderItem: ({ item }) => (
+                        <TouchableOpacity
+                          onPress={() => {
+                            setLocationQuery(item.name);
+                            setSelectedCity(item.name);
+                            setFilteredCities([]);
+                          }}
+                          style={{
+                            paddingVertical: 8,
+                            paddingHorizontal: 12,
+                          }}
+                        >
+                          <Text style={{ color: theme.text }}>{item.name}</Text>
+                        </TouchableOpacity>
+                      ),
+                    }}
+                  />
+                </View>
+
+                {!!locationQuery && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setLocationQuery('');
+                      setSelectedCity('');
+                      setFilteredCities([]);
+                    }}
+                    style={{ marginLeft: 6, justifyContent: 'center', alignItems: 'center', alignSelf: 'center' }}
+                  >
+                    <Ionicons name="close-circle" size={18} color={theme.placeholder} />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
             <TouchableOpacity style={[styles.selector, { borderColor: borderColorValue }]} onPress={() => setFeelingModalVisible(true)}>
               <View style={styles.selectorRow}>
                 <View style={{ flexDirection: 'row', alignItems: 'center'}}>
@@ -282,9 +465,19 @@ export default function SessionAdditions() {
                         <TouchableOpacity
                           key={item.id}
                           style={styles.optionRow}
-                          onPress={() => {
+                          onPress={async () => {
                             setSelectedHumidor(item);
                             setHumidorModalVisible(false);
+                            try {
+                              const auth = getAuth();
+                              const userId = auth.currentUser?.uid;
+                              const cigarsRef = collection(db, 'users', userId, 'humidors', item.id, 'cigars');
+                              const snapshot = await getDocs(cigarsRef);
+                              const cigars = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                              setHumidorCigars(cigars);
+                            } catch (error) {
+                              console.error('Failed to fetch cigars for humidor:', error);
+                            }
                           }}
                         >
                           <Ionicons
@@ -318,28 +511,38 @@ export default function SessionAdditions() {
                           }}
                         />
                         <Text style={[styles.bottomSheetTitle, { color: theme.text }]}>Choose Cigar Type</Text>
-                        {cigarTypes.map((item) => (
-                        <TouchableOpacity
-                            key={item}
-                            style={styles.optionRow}
-                            onPress={() => {
-                              if (item === cigarType) {
-                                setCigarType('')
-                              } else {
-                                setCigarType(item)
-                              }
-                              setTypeModalVisible(false)
-                            }}
-                        >
-                            <Ionicons
-                            name={item === cigarType ? 'radio-button-on' : 'radio-button-off'}
-                            size={20}
-                            color={theme.primary}
-                            style={{ marginRight: 10 }}
-                            />
-                            <Text style={[styles.modalText, { color: theme.text }]}>{item}</Text>
-                        </TouchableOpacity>
-                        ))}
+                        {!selectedHumidor ? (
+                          <Text style={{ color: theme.placeholder, fontSize: 16, textAlign: 'center', paddingVertical: 20 }}>
+                            Please select a humidor first
+                          </Text>
+                        ) : humidorCigars.length === 0 ? (
+                          <Text style={{ color: theme.placeholder, fontSize: 16, textAlign: 'center', paddingVertical: 20 }}>
+                            No cigars found in this humidor
+                          </Text>
+                        ) : (
+                          humidorCigars.map((item) => (
+                            <TouchableOpacity
+                              key={item.id}
+                              style={styles.optionRow}
+                              onPress={() => {
+                                if (item.name === cigarType) {
+                                  setCigarType('');
+                                } else {
+                                  setCigarType(item.name);
+                                }
+                                setTypeModalVisible(false);
+                              }}
+                            >
+                              <Ionicons
+                                name={item.name === cigarType ? 'radio-button-on' : 'radio-button-off'}
+                                size={20}
+                                color={theme.primary}
+                                style={{ marginRight: 10 }}
+                              />
+                              <Text style={[styles.modalText, { color: theme.text }]}>{item.name}</Text>
+                            </TouchableOpacity>
+                          ))
+                        )}
                     </View>
                   </TouchableWithoutFeedback>
                 </View>
@@ -390,15 +593,17 @@ export default function SessionAdditions() {
                 </View>
               </TouchableWithoutFeedback>
             </Modal>
+              </View>
+            </TouchableWithoutFeedback>
           </ScrollView>
           <View style={[styles.fixedBottomButton, { backgroundColor: theme.background, borderTopColor: theme.placeholder }]}>
             <TouchableOpacity style={[styles.saveButton, { backgroundColor: theme.primary }]} onPress={handleSave}>
               <Text style={[styles.saveText, { color: theme.background }]}>Save Activity</Text>
             </TouchableOpacity>
           </View>
-        </View>
-      </SafeAreaView>
-    </TouchableWithoutFeedback>
+        </SafeAreaView>
+      </TouchableWithoutFeedback>
+    </KeyboardAvoidingView>
   )
 }
 

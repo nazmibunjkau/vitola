@@ -23,6 +23,7 @@ import Search from './components/Search';
 import Scanner from './screens/Scanner';
 import CigarDetails from './screens/CigarDetails'
 import AppLoader from './screens/AppLoader'
+import Settings from './screens/Settings'
 
 const Stack = createStackNavigator()
 
@@ -69,6 +70,7 @@ function ThemeConsumer() {
             <Stack.Screen name='Search' component={Search} />
             <Stack.Screen name='Scanner' component={Scanner} />
             <Stack.Screen name='CigarDetails' component={CigarDetails} />
+            <Stack.Screen name='Settings' component={Settings} />
           </>
         ) : (
           <>

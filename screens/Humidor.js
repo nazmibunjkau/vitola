@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { View, SafeAreaView, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, Alert, Keyboard, TouchableWithoutFeedback } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { useNavigation } from '@react-navigation/native'
@@ -65,7 +66,8 @@ export default function Sessions() {
       });
       // Enrich each humidor with cigar count
       const enrichedHumidors = await Promise.all(humidorsData.map(async (h) => {
-      const cigarSnap = await getDocs(collection(db, 'users', auth.currentUser.uid, 'humidors', h.id, 'cigars'));        return {
+        const cigarSnap = await getDocs(collection(db, 'users', auth.currentUser.uid, 'humidors', h.id, 'cigars'));
+        return {
           ...h,
           cigarCount: cigarSnap.docs.filter(doc => !doc.data().placeholder).length,
         };
@@ -74,6 +76,20 @@ export default function Sessions() {
     });
 
     return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const loadSortPreferences = async () => {
+      try {
+        const storedOption = await AsyncStorage.getItem('sortOption');
+        const storedAscending = await AsyncStorage.getItem('sortAscending');
+        if (storedOption) setSortOption(storedOption);
+        if (storedAscending !== null) setSortAscending(storedAscending === 'true');
+      } catch (e) {
+        console.error('Failed to load sort preferences:', e);
+      }
+    };
+    loadSortPreferences();
   }, []);
 
   const closeSwipeable = (key) => {
@@ -476,13 +492,12 @@ export default function Sessions() {
               <TouchableOpacity
                 key={option}
                 onPress={() => {
-                  if (sortOption === option) {
-                    setSortAscending(prev => !prev); // toggle direction if same option
-                  } else {
-                    setSortAscending(true); // default to ascending for a new option
-                  }
+                  const newAscending = sortOption === option ? !sortAscending : true;
                   setSortOption(option);
+                  setSortAscending(newAscending);
                   setSortPopupVisible(false);
+                  AsyncStorage.setItem('sortOption', option);
+                  AsyncStorage.setItem('sortAscending', String(newAscending));
                 }}
                 style={{
                   paddingVertical: 10,
