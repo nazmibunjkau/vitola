@@ -19,11 +19,13 @@ import FAQ from './components/FAQ';
 import HumidorAddition from './components/HumidorAdditions';
 import NavigationScreen from './components/NotificationScreen';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
-import Search from './components/Search';
+import CigarSearch from './components/CigarSearch';
 import Scanner from './screens/Scanner';
 import CigarDetails from './screens/CigarDetails'
 import AppLoader from './screens/AppLoader'
 import Settings from './screens/Settings'
+import Upgrade from './screens/Upgrade';
+import ProfileSearch from './screens/ProfileSearch';
 
 const Stack = createStackNavigator()
 
@@ -67,10 +69,12 @@ function ThemeConsumer() {
             <Stack.Screen name='TermsAndConditions' component={TermsAndConditions} />
             <Stack.Screen name='HumidorAdditions' component={HumidorAddition}/>
             <Stack.Screen name='NotificationScreen' component={NavigationScreen}/>
-            <Stack.Screen name='Search' component={Search} />
+            <Stack.Screen name='CigarSearch' component={CigarSearch} />
             <Stack.Screen name='Scanner' component={Scanner} />
             <Stack.Screen name='CigarDetails' component={CigarDetails} />
             <Stack.Screen name='Settings' component={Settings} />
+            <Stack.Screen name='Upgrade' component={Upgrade} />
+            <Stack.Screen name='ProfileSearch' component={ProfileSearch} />
           </>
         ) : (
           <>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, TextInput, FlatList, TouchableOpacity, Image, ActivityIndicator, Keyboard, TouchableWithoutFeedback } from 'react-native';
-import { query, collection, getDocs, orderBy, startAt, endAt, where } from 'firebase/firestore';
+import { query, collection, getDocs, orderBy, startAt, endAt, where, getDoc, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons, MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
@@ -53,6 +53,39 @@ export default function Search() {
     loadRecent();
   }, []);
 
+  useEffect(() => {
+    const checkSearchLimit = async () => {
+      const userId = 'WrwfP03AmIZss7hMwFWyX4J16my1'; // You can replace this with dynamic user ID logic if needed
+      const userRef = doc(db, 'users', userId);
+      const userSnap = await getDoc(userRef);
+
+      if (userSnap.exists()) {
+        const userData = userSnap.data();
+        const subscription = userData.subscriptionPlan || 'free';
+
+        if (subscription === 'free') {
+          const now = new Date();
+          const lastReset = userData.searchReset?.toDate?.() || now;
+          const count = userData.searchCount || 0;
+          const diff = (now - lastReset) / (1000 * 60 * 60); // in hours
+
+          if (diff >= 24) {
+            await updateDoc(userRef, {
+              searchCount: 0,
+              searchReset: new Date(),
+            });
+          } else if (count >= 15) {
+            alert("You've reached your daily search limit. Please come back tomorrow or upgrade for unlimited searches.");
+            setSearchQuery('');
+            return;
+          }
+        }
+      }
+    };
+
+    checkSearchLimit();
+  }, [searchQuery]);
+
   const handleSelectCigar = async (cigar) => {
     let fullCigar = cigar;
 
@@ -69,6 +102,19 @@ export default function Search() {
     const updated = [fullCigar.name, ...recentSearches.filter(t => t !== fullCigar.name)].slice(0, 5);
     setRecentSearches(updated);
     await AsyncStorage.setItem('recentSearches', JSON.stringify(updated));
+
+    const userId = 'WrwfP03AmIZss7hMwFWyX4J16my1';
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+
+    if (userSnap.exists()) {
+      const userData = userSnap.data();
+      if (userData.subscriptionPlan === 'free') {
+        const currentCount = userData.searchCount || 0;
+        await updateDoc(userRef, { searchCount: currentCount + 1 });
+      }
+    }
+
     navigation.navigate('CigarDetails', { cigar: fullCigar, humidorId, humidorTitle });
   };
 

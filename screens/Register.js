@@ -1,10 +1,11 @@
 import React, { useState } from 'react'
 import { useNavigation } from "@react-navigation/native"
-import { View, SafeAreaView, StyleSheet, TouchableOpacity, Image, Text, TextInput, Keyboard, TouchableWithoutFeedback } from "react-native"
+import { View, SafeAreaView, StyleSheet, Platform, TouchableOpacity, Image, Text, TextInput, Keyboard, TouchableWithoutFeedback } from "react-native"
 import { ArrowLeftIcon, CheckIcon } from "react-native-heroicons/solid"
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { getFirestore, doc, setDoc } from 'firebase/firestore';
 import { auth } from '../config/firebase';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 const db = getFirestore();
 
@@ -21,32 +22,78 @@ export default function Register({}) {
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
     const [name, setName] = useState('')
-    
+    const [dob, setDob] = useState(null);
+    const [showDatePicker, setShowDatePicker] = useState(false);
+
+    const handleDateChange = (event, selectedDate) => {
+      if (Platform.OS === 'android') {
+        setShowDatePicker(false);
+        if (selectedDate) {
+          setDob(selectedDate);
+        }
+      } else {
+        if (selectedDate) {
+          setDob(selectedDate);
+        }
+      }
+    };
+
+    const calculateAge = (birthDate) => {
+        const today = new Date();
+        let age = today.getFullYear() - birthDate.getFullYear();
+        const m = today.getMonth() - birthDate.getMonth();
+
+        if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+            age--;
+        }
+        return age;
+    };
+
     const handleSubmit = async () => {
+        if (!dob) {
+            alert('Please select your date of birth.');
+            return;
+        }
+
+        const age = calculateAge(dob);
+        if (age < 21) {
+            alert('You must be 21 or older to register.');
+            return;
+        }
+
         if (name && email && password) {
             try {
-                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-                await updateProfile(userCredential.user, { displayName: name });
-                await auth.currentUser.reload();
+            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+            await updateProfile(userCredential.user, { displayName: name });
+            await auth.currentUser.reload();
 
-                try {
-                    await setDoc(doc(db, 'users', userCredential.user.uid), {
-                    email: userCredential.user.email,
-                    name: name,
-                    createdAt: new Date(),
-                    });
-                    console.log("User document successfully written!");
-                } catch (firestoreError) {
-                    console.error("Firestore write error:", firestoreError);
-                    alert(`User created but failed to save profile data: ${firestoreError.message}`);
-                }
-            }  catch (error) {
+            try {
+                await setDoc(doc(db, 'users', userCredential.user.uid), {
+                  email: userCredential.user.email,
+                  name: name,
+                  createdAt: new Date(),
+                  dob: dob ? dob.toISOString() : null,
+                  subscriptionPlan: 'free',
+                  followers: 0,
+                  following: 0,
+                  posts: 0,
+                });
+                console.log("User document successfully written!");
+            } catch (firestoreError) {
+                console.error("Firestore write error:", firestoreError);
+                alert(`User created but failed to save profile data: ${firestoreError.message}`);
+            }
+            } catch (error) {
+            if (error.code === 'auth/email-already-in-use') {
+                alert('This email is already registered. Please log in instead.');
+            } else {
                 console.error("Authentication or profile update error:", error);
                 alert(`Registration failed: ${error.message}`);
             }
+            }
         } else {
             alert("Please fill all fields.");
-        }; 
+        }
     };
     return (
         <TouchableWithoutFeedback onPress={Keyboard.dismiss} accesible={false}>
@@ -93,19 +140,60 @@ export default function Register({}) {
                             placeholderTextColor='#999'
                             secureTextEntry>
                         </TextInput>
-                        <TouchableOpacity style={styles.registerButton}
-                            onPress={() => {
-                                if (agreed) {
-                                    handleSubmit();
-                                }
-                                else {
-                                    alert('You must agree to the Terms & Conditions')
-                                }
-                            }}
-                        >
-                            <Text style={styles.registerButtonText}>Register</Text>
-                        </TouchableOpacity>
                     </View>
+                    <View style={styles.inputContainer}>
+                      <Text style={styles.email}>Date of Birth</Text>
+                      <TouchableOpacity
+                        style={[styles.input, { justifyContent: 'center' }]}
+                        onPress={() => setShowDatePicker(true)}
+                      >
+                        <Text style={{ color: dob ? '#333' : '#999' }}>
+                          {dob ? dob.toLocaleDateString() : 'Select Date of Birth'}
+                        </Text>
+                      </TouchableOpacity>
+                      <Text style={styles.dobNote}>
+                        * You must be 21+ to register for the app and use it.
+                      </Text>
+                      {showDatePicker && (
+                        <View style={{ backgroundColor: '#fff', padding: 10 }}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+                            <TouchableOpacity
+                              onPress={() => setShowDatePicker(false)}
+                              style={{
+                                paddingHorizontal: 12,
+                                paddingVertical: 6,
+                                borderRadius: 6,
+                                borderWidth: 1,
+                                borderColor: '#4b382a',
+                                backgroundColor: 'transparent',
+                              }}
+                            >
+                            <Text style={{ color: '#4b382a', fontSize: 14 }}>Confirm</Text>
+                            </TouchableOpacity>
+                          </View>
+                          <DateTimePicker
+                            value={dob || new Date(2000, 0, 1)}
+                            mode="date"
+                            display="spinner"
+                            onChange={handleDateChange}
+                            maximumDate={new Date()}
+                            style={{ backgroundColor: '#fff' }}
+                          />
+                        </View>
+                      )}
+                    </View>
+                    <TouchableOpacity style={styles.registerButton}
+                        onPress={() => {
+                            if (agreed) {
+                                handleSubmit();
+                            }
+                            else {
+                                alert('You must agree to the Terms & Conditions')
+                            }
+                        }}
+                    >
+                        <Text style={styles.registerButtonText}>Register</Text>
+                    </TouchableOpacity>
                     <View>
                         <Text style={styles.orText}>
                             Or
@@ -168,14 +256,14 @@ const styles = StyleSheet.create({
     logoContainer: {
         justifyContent: 'center',
         alignItems: 'center',
-        marginTop: -150
+        marginTop: -40
     },
     image: {
-        width: '50%',
-        height: '50%',
+        width: 150,
+        height: 150,
     },
     titleContainer: {
-        marginTop: -150
+        marginTop: -10
     }, 
     title: {
         fontSize: 24,
@@ -216,7 +304,9 @@ const styles = StyleSheet.create({
         paddingVertical: 10,
         borderRadius: 16,
         marginTop: 20,
-        paddingHorizontal: 16
+        paddingHorizontal: 16,
+        width: '95%',
+        alignSelf: 'center'
     },
     registerButtonText: {
         fontSize: 16,
@@ -236,7 +326,7 @@ const styles = StyleSheet.create({
     socialContainer: {
         flexDirection: 'row',
         justifyContent: 'center',
-        marginTop: 10,
+        marginTop: 4,
         alignItems: 'center',
         gap: 48
     },
@@ -291,5 +381,10 @@ const styles = StyleSheet.create({
         color: '#4b382a',
         fontWeight: 'bold',
         textDecorationLine: 'underline',
+    },
+    dobNote: {
+      fontSize: 12,
+      color: '#4b382a',
+      marginTop: 6
     }
 })

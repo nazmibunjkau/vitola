@@ -1,31 +1,38 @@
-import React, { useState, useRef } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
-  Image,
-  ScrollView,
-  TouchableOpacity,
-  Modal,
-  FlatList,
-  Alert
-} from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, SafeAreaView, Image, ScrollView, TouchableOpacity, Modal, FlatList, Alert } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { Share } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { db } from '../config/firebase';
-import { collection, doc, setDoc, addDoc, getDocs, deleteDoc, getDoc } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, deleteDoc, getDoc } from 'firebase/firestore';
 import useAuth from '../hooks/useAuth';
-import { RadioButton } from 'react-native-paper';
 
 export default function CigarDetails() {
   const route = useRoute();
   const navigation = useNavigation();
-  const { cigar, humidorId, userId, humidorTitle } = route.params || {};
+  const { cigar, humidorId } = route.params || {};
   const { theme } = useTheme();
   const { user } = useAuth();
+
+  const [subscriptionStatus, setSubscriptionStatus] = useState('free');
+
+  useEffect(() => {
+    const fetchSubscriptionStatus = async () => {
+      if (!user?.uid) return;
+      try {
+        const userRef = doc(db, 'users', user.uid);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          const data = userSnap.data();
+          setSubscriptionStatus(data.subscription || 'free');
+        }
+      } catch (error) {
+        console.error('Error fetching subscription status:', error);
+      }
+    };
+    fetchSubscriptionStatus();
+  }, [user?.uid]);
 
   const [selectedSpec, setSelectedSpec] = useState('Manufacturer');
   const [containerWidth, setContainerWidth] = useState(0);
@@ -47,24 +54,45 @@ export default function CigarDetails() {
         return;
       }
 
+      // Fetch current cigars in that humidor
+      const cigarsRef = collection(db, 'users', uid, 'humidors', humidorId, 'cigars');
+      const snapshot = await getDocs(cigarsRef);
+      const cigarList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      if (subscriptionStatus === 'free' && cigarList.length >= 6) {
+        Alert.alert(
+          'Upgrade Required',
+          'Free users can only add up to 6 cigars per humidor. Upgrade to add unlimited cigars.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Upgrade',
+              onPress: () => navigation.navigate('Upgrade')
+            }
+          ]
+        );
+        return;
+      }
+
       const cigarId = cigar?.id || cigar?.name?.toLowerCase().replace(/\s+/g, '-');
       if (!cigarId) {
         console.error('Cigar ID is missing.');
         alert('This cigar is missing an ID and cannot be added.');
         return;
       }
-      console.log('Adding cigar with ID:', cigarId);
+
       const humidorCigarRef = doc(db, 'users', uid, 'humidors', humidorId, 'cigars', cigarId);
-      // Check if cigar already exists in the selected humidor
       const docSnap = await getDoc(humidorCigarRef);
       if (docSnap.exists()) {
         Alert.alert('Already Exists', 'This cigar is already in the selected humidor.');
         return;
       }
+
       await setDoc(humidorCigarRef, {
         ...cigar,
         id: cigarId,
         addedAt: new Date().toISOString(),
+        quantity: 1,
       });
 
       Alert.alert('Success', 'Cigar added to your humidor!');
@@ -81,6 +109,12 @@ export default function CigarDetails() {
       const snapshot = await getDocs(collection(db, 'users', user.uid, 'humidors'));
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setHumidors(list);
+      // If only one humidor, add directly and bypass modal
+      if (list.length === 1) {
+        setHumidorModalVisible(false);
+        await handleAddToHumidor(list[0].id);
+        return;
+      }
       setHumidorModalVisible(true);
     } catch (error) {
       console.error('Error fetching humidors:', error);
@@ -262,16 +296,6 @@ export default function CigarDetails() {
     },
   });
 
-  function Detail({ label, value, theme }) {
-    if (!value) return null;
-    return (
-      <View style={styles.detailRow}>
-        <Text style={[styles.detailLabel, { color: theme.primary }]}>{label}:</Text>
-        <Text style={[styles.detailValue, { color: theme.text }]}>{value}</Text>
-      </View>
-    );
-  }
-
   const onShare = async () => {
     if (!cigar) return;
     const message = `Check out this amazing cigar on Vitola!`;
@@ -286,7 +310,7 @@ export default function CigarDetails() {
 
   const renderStars = (rating) => {
     const stars = [];
-    const roundedRating = Math.round(rating * 2) / 2; // round to nearest 0.5
+    const roundedRating = Math.round(rating * 2) / 2;
     for (let i = 1; i <= 5; i++) {
       if (i <= Math.floor(roundedRating)) {
         stars.push(

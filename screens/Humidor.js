@@ -19,13 +19,14 @@ import {
   orderBy,
   serverTimestamp,
   getDocs,
-  getDoc,
 } from 'firebase/firestore'
+import { getDoc } from 'firebase/firestore';
 
 export default function Sessions() {
   const navigation = useNavigation()
   const { theme } = useTheme()
   const [humidor, setHumidor] = useState([])
+  const [subscriptionPlan, setSubscriptionPlan] = useState('free');
   const [modalVisible, setModalVisible] = useState(false)
   const [humidorName, setHumidorName] = useState('')
   const [renameModalVisible, setRenameModalVisible] = useState(false)
@@ -53,6 +54,16 @@ export default function Sessions() {
 
   useEffect(() => {
     if (!auth.currentUser) return;
+
+    // Fetch subscription plan
+    const fetchSubscriptionPlan = async () => {
+      const userDocRef = doc(db, 'users', auth.currentUser.uid);
+      const userDocSnap = await getDoc(userDocRef);
+      if (userDocSnap.exists()) {
+        setSubscriptionPlan(userDocSnap.data()?.subscriptionPlan || 'free');
+      }
+    };
+    fetchSubscriptionPlan();
 
     const q = query(
       collection(db, 'users', auth.currentUser.uid, 'humidors'),
@@ -362,7 +373,13 @@ export default function Sessions() {
       )}
       <TouchableOpacity
         style={[styles.fab, { backgroundColor: theme.primary }]}
-        onPress={() => setModalVisible(true)}
+        onPress={() => {
+          if (subscriptionPlan === 'free' && humidor.length >= 1) {
+            navigation.navigate('Upgrade');
+          } else {
+            setModalVisible(true);
+          }
+        }}
       >
         <Ionicons name="add" size={32} color={theme.iconOnPrimary} />
       </TouchableOpacity>

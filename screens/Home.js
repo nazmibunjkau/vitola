@@ -1,25 +1,26 @@
-import React, { useEffect, useState, useRef } from "react"
-import { StyleSheet, SafeAreaView, Text, View, TouchableOpacity, Image, Dimensions, ScrollView, TextInput } from "react-native"
-import { Share } from 'react-native';
-import { auth } from "../config/firebase"
-import { onAuthStateChanged } from 'firebase/auth';
+import React, { useEffect, useState, useRef, useCallback } from "react"
+import { StyleSheet, SafeAreaView, Text, View, TouchableOpacity, Image, Dimensions, ScrollView, TextInput, Modal, Pressable, Alert, Share } from "react-native"
+import { useFocusEffect } from '@react-navigation/native';
+import { auth, db } from "../config/firebase"
+import { onAuthStateChanged, getAuth } from 'firebase/auth';
 import { Ionicons } from '@expo/vector-icons'
 import { useTheme } from '../context/ThemeContext';
-import { doc, getDoc, collection, query, where, orderBy, onSnapshot } from "firebase/firestore";
-import { updateDoc, arrayUnion, arrayRemove, doc as firestoreDoc } from "firebase/firestore";
-import { getAuth } from "firebase/auth";
-import { db } from "../config/firebase";
+import { doc, getDoc, collection, query, where, orderBy, onSnapshot, updateDoc, arrayUnion, arrayRemove, doc as firestoreDoc, deleteDoc } from "firebase/firestore";
+import logo from '../img/logo.png';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function Home({ navigation }) {
     const { theme } = useTheme();
     const [firstName, setFirstName] = useState("")
     const [activities, setActivities] = useState([]);
-    const [userProfiles, setUserProfiles] = useState({});  // store user profiles keyed by userId
+    const [userProfiles, setUserProfiles] = useState({}); 
     const isFirstLoad = useRef(true);
-    const screenWidth = Dimensions.get('window').width;
-    // Comment input state per activity
     const [commentInput, setCommentInput] = useState({});
     const [showCommentInput, setShowCommentInput] = useState({});
+    const [modalVisible, setModalVisible] = useState(false);
+    const [selectedPost, setSelectedPost] = useState(null);
+    const [popupPosition, setPopupPosition] = useState({ top: 0, left: 0 });
+    const ellipsisRefs = useRef({});
 
     // Fetch current user first name for greeting
     useEffect(() => {
@@ -45,6 +46,36 @@ export default function Home({ navigation }) {
       });
       return () => unsubscribe();
     }, []);
+
+    useFocusEffect(
+      useCallback(() => {
+        const checkVisitCount = async () => {
+          try {
+            // Get subscription status from Firestore
+            const userRef = doc(db, 'users', auth.currentUser.uid);
+            const userSnap = await getDoc(userRef);
+            const userData = userSnap.exists() ? userSnap.data() : {};
+            const subscription = userData.subscriptionPlan || 'free';
+
+            // Only show Upgrade.js if user is on free plan
+            if (subscription === 'free') {
+              const countStr = await AsyncStorage.getItem('homeVisitCount');
+              const count = parseInt(countStr, 10) || 0;
+              const newCount = count + 1;
+              await AsyncStorage.setItem('homeVisitCount', newCount.toString());
+
+              if (newCount % 6 === 0) {
+                navigation.navigate('Upgrade');
+              }
+            }
+          } catch (err) {
+            console.error('Error tracking home visits or fetching subscription:', err);
+          }
+        };
+
+        checkVisitCount();
+      }, [])
+    );
 
     // Fetch user activities and user profiles for each post author
     useEffect(() => {
@@ -91,6 +122,41 @@ export default function Home({ navigation }) {
       return () => unsubscribePosts();
     }, []);
 
+    const handleDeletePost = (postId) => {
+      Alert.alert(
+        "Delete Post",
+        "Are you sure you want to delete this post? This action cannot be undone.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Delete",
+            style: "destructive",
+            onPress: async () => {
+              try {
+                await deleteDoc(firestoreDoc(db, "user_activities", postId));
+                setActivities(prev => prev.filter(post => post.id !== postId));
+                setModalVisible(false);
+              } catch (err) {
+                Alert.alert("Error", "Could not delete post.");
+              }
+            }
+          }
+        ]
+      );
+    };
+
+    const handleUnfollow = (userId) => {
+      // TODO: Add your unfollow logic here
+      setModalVisible(false);
+      Alert.alert("Unfollowed", "You have unfollowed this user.");
+    };
+
+    // Report handler
+    const handleReport = () => {
+      setModalVisible(false);
+      Alert.alert("Reported", "Thank you for reporting this post.");
+    };
+
     // Like/unlike post handler
     const handleLike = async (postId, currentUserId) => {
       const postRef = firestoreDoc(db, "user_activities", postId);
@@ -110,13 +176,36 @@ export default function Home({ navigation }) {
         <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
           <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
             <View style={styles.headerRow}>
-                <View style={styles.textBlock}>
-                    <Text style={[styles.greeting, { color: theme.text }]}>Hi, {firstName}</Text>
-                    <Text style={[styles.subtext, { color: theme.text }]}>Welcome Back!</Text>
-                </View>
-                <TouchableOpacity style={styles.bellButton} onPress={() => navigation.navigate('NotificationScreen')}>
-                    <Ionicons name="notifications-outline" size={28} color={theme.primary} />
-                </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.bellButton}
+                onPress={() => navigation.navigate('ProfileSearch')}
+              >
+                <Ionicons name="person-add" size={28} marginLeft={20} color={theme.primary} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.upgradeButton,
+                  { backgroundColor: theme.primary, shadowColor: theme.text },
+                ]}
+                onPress={() => navigation.navigate('Upgrade')}
+              >
+                <Image
+                  source={logo}
+                  style={[
+                    styles.upgradeLogo,
+                    { backgroundColor: theme.background },
+                  ]}
+                />
+                <Text style={[styles.upgradeText, { color: theme.background }]}>Upgrade</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.bellButton}
+                onPress={() => navigation.navigate('NotificationScreen')}
+              >
+                <Ionicons name="notifications-outline" size={28} color={theme.primary} />
+              </TouchableOpacity>
             </View>
             <View style={{ height: 1, backgroundColor: theme.placeholder, marginTop: 20, width: '100%' }} />
             <View style={{ paddingHorizontal: 30, marginTop: 20 }}>
@@ -125,6 +214,7 @@ export default function Home({ navigation }) {
               ) : ( 
                 activities.map((activity) => {  
                   const userProfile = userProfiles[activity.user_id] || {};
+                  const isCurrentUser = activity.user_id === auth.currentUser?.uid;
                   return (
                     <View key={activity.id} style={{ padding: 12, marginBottom: 8 }}>
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -156,7 +246,17 @@ export default function Home({ navigation }) {
                             </Text>
                           </View>
                         </View>
-                        <TouchableOpacity style={{ padding: 4 }}>
+                        <TouchableOpacity
+                          ref={ref => { if (ref) ellipsisRefs.current[activity.id] = ref; }}
+                          style={{ padding: 4 }}
+                          onPress={() => {
+                            ellipsisRefs.current[activity.id]?.measureInWindow((x, y, width, height) => {
+                              setPopupPosition({ top: y + height + 4, left: x - 60 }); // Shift further left (was -20)
+                              setSelectedPost(activity);
+                              setModalVisible(true);
+                            });
+                          }}
+                        >
                           <Ionicons name="ellipsis-vertical" size={22} color={theme.text} />
                         </TouchableOpacity>
                       </View>
@@ -232,6 +332,8 @@ export default function Home({ navigation }) {
                           </TouchableOpacity>
                         </View>
                       )}
+                      {/* Add this lighter separator line below the icons and above the first comment */}
+                      <View style={{ height: 1, backgroundColor: theme.inputBackground || "#e6ded7", opacity: 0.7, marginTop: 10, marginBottom: 6, width: '100%' }} />
                       {/* Comment input box */}
                       {showCommentInput[activity.id] && (
                         <View style={{ marginTop: 10, position: 'relative', justifyContent: 'center' }}>
@@ -302,7 +404,8 @@ export default function Home({ navigation }) {
                       {activity.comments && activity.comments.length > 0 && (
                         <View style={{ marginTop: 12 }}>
                           {activity.comments.map((comment, index) => (
-                            <View key={index} style={{ marginBottom: 8 }}>
+                            <View key={index} style={{ marginBottom: 16 }}>
+                              {/* Increased marginBottom from 8 to 16 */}
                               <Text style={{ fontWeight: '600', color: theme.text }}>{comment.userName || 'User'}</Text>
                               <Text style={{ color: theme.text }}>{comment.text}</Text>
                             </View>
@@ -310,6 +413,50 @@ export default function Home({ navigation }) {
                         </View>
                       )}
                       <View style={{ height: 1, backgroundColor: theme.placeholder, marginTop: 12, position: 'relative', left: -42, width: Dimensions.get('window').width }} />
+                      {/* Modal for post options */}
+                      <Modal
+                        animationType="fade"
+                        transparent={true}
+                        visible={modalVisible && selectedPost?.id === activity.id}
+                        onRequestClose={() => setModalVisible(false)}
+                      >
+                        <Pressable style={styles.modalOverlay} onPress={() => setModalVisible(false)}>
+                          <View
+                            style={[
+                              styles.popup,
+                              {
+                                backgroundColor: theme.inputBackground || "#fff",
+                                position: "absolute",
+                                top: popupPosition.top,
+                                left: popupPosition.left,
+                                zIndex: 1000,
+                              },
+                            ]}
+                          >
+                            <TouchableOpacity
+                              style={styles.popupOption}
+                              onPress={handleReport}
+                            >
+                              <Text style={{ color: "#d32f2f", fontWeight: "400", fontSize: 16 }}>Report</Text>
+                            </TouchableOpacity>
+                            {isCurrentUser ? (
+                              <TouchableOpacity
+                                style={styles.popupOption}
+                                onPress={() => handleDeletePost(activity.id)}
+                              >
+                                <Text style={{ color: theme.primary, fontWeight: "400", fontSize: 16 }}>Delete</Text>
+                              </TouchableOpacity>
+                            ) : (
+                              <TouchableOpacity
+                                style={styles.popupOption}
+                                onPress={() => handleUnfollow(activity.user_id)}
+                              >
+                                <Text style={{ color: theme.text, fontWeight: "400", fontSize: 16 }}>Unfollow</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        </Pressable>
+                      </Modal>
                     </View>
                   )
                 })
@@ -328,31 +475,84 @@ const styles = StyleSheet.create({
         backgroundColor: '#fff'
     },
     headerRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginRight: 10,
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      flexWrap: 'nowrap', // prevents wrapping that breaks layout
     },
-    textBlock: {
-        marginLeft: 24,
+    textBlockContainer: {
+      flexShrink: 1,
+      flexGrow: 1,
+      minWidth: 0,
+      marginRight: 8,
+      marginLeft: 18,
     },
     greeting: {
-        fontSize: 34,
-        fontWeight: '300',
-        fontFamily: 'Avenir, Montserrat, Corbel, URW Gothic, source-sans-pro, sans-serif',
-        color: '#4b382a',
-        marginTop: 20,
-        marginBottom: 6,
+      fontSize: 30,
+      fontWeight: '300',
+      fontFamily: 'Avenir, Montserrat, Corbel, URW Gothic, source-sans-pro, sans-serif',
+      color: '#4b382a',
+      marginTop: 20,
+      marginBottom: 6,
+      maxWidth: '100%',
     },
     subtext: {
-        fontSize: 16,
-        fontWeight: '400',
-        fontFamily: 'Avenir, Montserrat, Corbel, URW Gothic, source-sans-pro, sans-serif',
-        color: '#7a5e47',
-        marginTop: 12,
+      fontSize: 16,
+      fontWeight: '400',
+      fontFamily: 'Avenir, Montserrat, Corbel, URW Gothic, source-sans-pro, sans-serif',
+      color: '#7a5e47',
+      marginTop: 12,
+      maxWidth: '100%',
     },
     bellButton: {
-        padding: 10,
-        marginRight: 20,
-    }
+      padding: 10,
+      marginRight: 20,
+      alignSelf: 'center', 
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.2)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    popup: {
+      borderRadius: 16,
+      paddingVertical: 8,
+      paddingHorizontal: 0,
+      alignItems: 'flex-start',
+      backgroundColor: "#fff",
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.15,
+      shadowRadius: 8,
+      elevation: 5,
+    },
+    popupOption: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    width: '100%',
+  },
+  upgradeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    marginHorizontal: 8,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
+    alignSelf: 'center',
+  },
+  upgradeLogo: {
+    width: 32,
+    height: 32,
+    marginRight: 10,
+    borderRadius: 11,
+  },
+  upgradeText: {
+    fontWeight: '400',
+    fontSize: 16,
+  },
 })

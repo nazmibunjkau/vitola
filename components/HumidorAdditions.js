@@ -5,14 +5,14 @@ import { useTheme } from '../context/ThemeContext';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { db } from '../config/firebase';
-import { deleteDoc, getDoc, getDocs, collection, doc, updateDoc } from 'firebase/firestore';
+import { deleteDoc, getDoc, getDocs, collection, doc, updateDoc, addDoc } from 'firebase/firestore';
 import { ActionSheetIOS } from 'react-native';
 
 export default function HumidorAdditions() {
-  const { theme, isDarkMode } = useTheme();
+  const { theme } = useTheme();
   const route = useRoute();
   const navigation = useNavigation();
-  const { humidorTitle, createdAt, humidorId, userId, } = route.params || {};
+  const { humidorTitle, createdAt, humidorId, userId } = route.params || {};
   const createdDate = createdAt ? new Date(createdAt).toLocaleDateString() : '';
   const [isActive, setIsActive] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -27,10 +27,11 @@ export default function HumidorAdditions() {
   });
 
   const [selectedFilterCategory, setSelectedFilterCategory] = useState(null);
-  // For filter popup dynamic positioning
+  const [userSubscription, setUserSubscription] = useState('free');
   const filterBarRef = useRef(null);
   const filterButtonRefs = useRef({});
   const [popupPosition, setPopupPosition] = useState({ x: 0, y: 0 });
+
   const onFilterPress = (category) => {
     filterButtonRefs.current[category]?.measure((x, y, width, height, pageX, pageY) => {
       setPopupPosition({ x: pageX, y: pageY + height + 6 });
@@ -39,10 +40,8 @@ export default function HumidorAdditions() {
   };
 
   const closePopup = () => setSelectedFilterCategory(null);
-
-
   const screenWidth = Dimensions.get('window').width;
-  const CARD_WIDTH = (screenWidth - 48) / 2; // 16 * 2 padding + 16 horizontal padding + 4 * 2 marginHorizontal
+  const CARD_WIDTH = (screenWidth - 48) / 2; 
 
   // Load humidor_status from Firestore on mount
   useEffect(() => {
@@ -67,19 +66,26 @@ export default function HumidorAdditions() {
 
   useFocusEffect(
     useCallback(() => {
-      const fetchCigars = async () => {
+      const fetchCigarsAndSubscription = async () => {
         if (!humidorId || !userId) return;
         try {
           const cigarsRef = collection(db, 'users', userId, 'humidors', humidorId, 'cigars');
           const snapshot = await getDocs(cigarsRef);
           const cigarList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
           setCigars(cigarList);
+
+          // Fetch user subscription status
+          const userRef = doc(db, 'users', userId);
+          const userSnap = await getDoc(userRef);
+          const userData = userSnap.exists() ? userSnap.data() : {};
+          const subscriptionStatus = userData.subscription || 'free';
+          setUserSubscription(subscriptionStatus);
         } catch (error) {
-          console.error('Failed to fetch cigars:', error);
+          console.error('Failed to fetch cigars or user subscription:', error);
         }
       };
 
-      fetchCigars();
+      fetchCigarsAndSubscription();
     }, [humidorId, userId])
   );
 
@@ -119,7 +125,6 @@ export default function HumidorAdditions() {
         .filter(Boolean)
     ),
   ];
-  // Added for Date Added filter
   const addedDates = [
     ...new Set(
       cigars
@@ -174,12 +179,56 @@ export default function HumidorAdditions() {
     );
   };
 
+  const groupedCigars = Object.values(
+    filteredCigars.reduce((acc, cigar) => {
+      const key = cigar.name?.trim().toLowerCase() || cigar.id;
+      if (!acc[key]) {
+        acc[key] = { ...cigar, count: 1, ids: [cigar.id] };
+      } else {
+        acc[key].count += 1;
+        acc[key].ids.push(cigar.id);
+      }
+      return acc;
+    }, {})
+  ).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  const handleChangeQuantity = async (cigar, delta) => {
+    if (!userId || !humidorId) return;
+    const newQuantity = (cigar.quantity || 1) + delta;
+    if (newQuantity < 1) return;
+
+    // Calculate the total quantity if this change is applied
+    const totalQuantity = cigars.reduce((sum, c) =>
+      c.id === cigar.id
+        ? sum + newQuantity
+        : sum + (c.quantity || 1)
+    , 0);
+
+    // If user is on free plan and would exceed 6, navigate to Upgrade
+    if (userSubscription === 'free' && totalQuantity > 6) {
+      navigation.navigate('Upgrade');
+      return;
+    }
+
+    try {
+      const cigarRef = doc(db, 'users', userId, 'humidors', humidorId, 'cigars', cigar.id);
+      await updateDoc(cigarRef, { quantity: newQuantity });
+      setCigars(prev =>
+        prev.map(c =>
+          c.id === cigar.id ? { ...c, quantity: newQuantity } : c
+        )
+      );
+    } catch (error) {
+      Alert.alert('Error', 'Failed to update quantity.');
+    }
+  };
+
   const renderCigar = ({ item }) => (
     <View
       style={{
         backgroundColor: theme.accent,
         borderColor: theme.primary,
-        minHeight: 180,
+        minHeight: 200,
         padding: 10,
         marginBottom: 12,
         borderWidth: 1,
@@ -187,7 +236,8 @@ export default function HumidorAdditions() {
         width: CARD_WIDTH,
         marginHorizontal: 4,
         alignItems: 'center',
-        position: 'relative', // Added for absolute positioning of ellipsis
+        position: 'relative',
+        justifyContent: 'space-between',
       }}
     >
       <TouchableOpacity
@@ -219,15 +269,62 @@ export default function HumidorAdditions() {
             }}
           />
         )}
-        <Text style={{ color: theme.text, fontWeight: 'bold', marginBottom: 4, textAlign: 'center' }}>
-          {item.name || 'Unnamed Cigar'}
-        </Text>
-        {item.addedAt && (
-          <Text style={{ color: theme.text, fontSize: 12, marginTop: 4 }}>
-            Date Added: {new Date(item.addedAt).toLocaleDateString()}
+        <View style={{ minHeight: 48, justifyContent: 'center', width: '100%' }}>
+          <Text
+            style={{
+              color: theme.text,
+              fontWeight: 'bold',
+              marginBottom: 2,
+              textAlign: 'center',
+              fontSize: 15,
+            }}
+            numberOfLines={2}
+            ellipsizeMode="tail"
+          >
+            {item.name || 'Unnamed Cigar'}
           </Text>
-        )}
+          {item.addedAt && (
+            <Text style={{ color: theme.text, fontSize: 12, textAlign: 'center' }}>
+              Date Added: {new Date(item.addedAt).toLocaleDateString()}
+            </Text>
+          )}
+        </View>
       </TouchableOpacity>
+      {/* Quantity controls always at the bottom, in line */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}>
+        <TouchableOpacity
+          onPress={() => handleChangeQuantity(item, -1)}
+          disabled={item.quantity <= 1}
+          style={{
+            backgroundColor: theme.placeholder,
+            borderRadius: 16,
+            width: 32,
+            height: 32,
+            justifyContent: 'center',
+            alignItems: 'center',
+            marginRight: 10,
+          }}
+        >
+          <Text style={{ color: theme.background, fontSize: 22, fontWeight: 'bold' }}>-</Text>
+        </TouchableOpacity>
+        <Text style={{ fontSize: 18, fontWeight: 'bold', color: theme.text, minWidth: 32, textAlign: 'center' }}>
+          {item.quantity || 1}
+        </Text>
+        <TouchableOpacity
+          onPress={() => handleChangeQuantity(item, 1)}
+          style={{
+            backgroundColor: theme.primary,
+            borderRadius: 16,
+            width: 32,
+            height: 32,
+            justifyContent: 'center',
+            alignItems: 'center',
+            marginLeft: 10,
+          }}
+        >
+          <Text style={{ color: theme.background, fontSize: 22, fontWeight: 'bold' }}>+</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
   
@@ -249,6 +346,12 @@ export default function HumidorAdditions() {
   };
 
   const showAddCigarOptions = () => {
+    const cigarLimitReached = userSubscription === 'free' && cigars.length >= 6;
+    if (cigarLimitReached) {
+      navigation.navigate('Upgrade');
+      return;
+    }
+
     if (Platform.OS === 'ios') {
       const options = ['Scan a Cigar', 'Search a Cigar', 'Cancel'];
       const cancelButtonIndex = 2;
@@ -262,7 +365,7 @@ export default function HumidorAdditions() {
           if (buttonIndex === 0) {
             navigation.navigate('Scanner', { humidorId, userId, humidorTitle });
           } else if (buttonIndex === 1) {
-            navigation.navigate('Search', { humidorId, userId, humidorTitle });
+            navigation.navigate('CigarSearch', { humidorId, userId, humidorTitle });
           }
         }
       );

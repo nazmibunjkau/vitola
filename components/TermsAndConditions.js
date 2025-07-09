@@ -1,11 +1,11 @@
-import { StyleSheet, Text, View } from 'react-native'
+import { StyleSheet, Text, SafeAreaView } from 'react-native'
 import React from 'react'
 
 export default function TermsAndConditions() {
   return (
-    <View>
+    <SafeAreaView>
       <Text>TermsAndConditions</Text>
-    </View>
+    </SafeAreaView>
   )
 }
 

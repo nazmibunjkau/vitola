@@ -9,7 +9,9 @@ import Profile from "../screens/Profile";
 import { useRoute } from "@react-navigation/native";
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
+import { getAuth } from 'firebase/auth';
 
+const auth = getAuth();
 const Tab = createBottomTabNavigator();
 
 export default function BottomTabs() {
@@ -92,7 +94,9 @@ export default function BottomTabs() {
       />
       <Tab.Screen
         name="Profile"
-        component={Profile}
+        children={(props) => (
+          <Profile {...props} route={{ ...props.route, params: { userId: auth.currentUser?.uid } }} />
+        )}
         options={{
           tabBarIcon: ({ focused }) => (
             <View style={styles.icon}>

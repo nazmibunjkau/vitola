@@ -153,7 +153,7 @@ export default function Scanner({ navigation }) {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.searchIconButton}
-            onPress={() => navigation.navigate('Search')}
+            onPress={() => navigation.navigate('CigarSearch')}
           >
             <Ionicons name="search" size={24} color={BROWN} />
           </TouchableOpacity>
