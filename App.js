@@ -26,6 +26,8 @@ import AppLoader from './screens/AppLoader'
 import Settings from './screens/Settings'
 import Upgrade from './screens/Upgrade';
 import ProfileSearch from './screens/ProfileSearch';
+import ClubAdditions from './components/ClubAdditions';
+import Clubs from './screens/Clubs';
 
 const Stack = createStackNavigator()
 
@@ -75,6 +77,8 @@ function ThemeConsumer() {
             <Stack.Screen name='Settings' component={Settings} />
             <Stack.Screen name='Upgrade' component={Upgrade} />
             <Stack.Screen name='ProfileSearch' component={ProfileSearch} />
+            <Stack.Screen name='ClubAdditions' component={ClubAdditions} />
+            <Stack.Screen name='Clubs' component={Clubs} />
           </>
         ) : (
           <>

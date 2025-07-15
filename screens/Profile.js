@@ -1,5 +1,5 @@
 import * as ImagePicker from 'expo-image-picker';
-import { doc, updateDoc, getDoc, arrayUnion, arrayRemove, collection, getDocs, query, orderBy, where } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, arrayUnion, arrayRemove, collection, getDocs, query, orderBy, where, onSnapshot } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db } from '../config/firebase';
 import { Image } from 'react-native';
@@ -22,29 +22,57 @@ export default function Profile({ navigation, route }) {
   const [followersCount, setFollowersCount] = useState(0);
   const [followingCount, setFollowingCount] = useState(0);
   const [postsCount, setPostsCount] = useState(0);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [clubs, setClubs] = useState([]);
 
   useEffect(() => {
-    const fetchUser = async () => {
+    // Fetch clubs created by the user
+    const fetchClubs = async () => {
       try {
-        const userDoc = await getDoc(doc(db, 'users', auth.currentUser.uid));
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          setFullName(userData.fullName || userData.name || "");
-          setProfilePic(userData.photoURL || null);
-          setBio(userData.bio || "");
-          setFollowersCount(userData.followers || 0);
-          setFollowingCount(userData.following || 0);
-          // Query user_activities to count posts by this user
-          const postsQuery = query(collection(db, 'user_activities'), where('user_id', '==', auth.currentUser.uid));
-          const postsSnapshot = await getDocs(postsQuery);
-          setPostsCount(postsSnapshot.size);
-        }
-      } catch (error) {
-        console.error("Error fetching user data:", error);
+        const clubsRef = collection(db, 'clubs');
+        const snapshot = await getDocs(clubsRef);
+        const userClubs = [];
+        snapshot.forEach(docSnap => {
+          const data = docSnap.data();
+          // Assuming you store the creator's userId as "createdBy"
+          if (data.createdBy === auth.currentUser.uid) {
+            userClubs.push({
+              id: docSnap.id,
+              name: data.name,
+              image: data.image,
+            });
+          }
+        });
+        setClubs(userClubs);
+      } catch (err) {
+        console.error("Error fetching clubs:", err);
       }
     };
-    fetchUser();
+    fetchClubs();
   }, []);
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(doc(db, 'users', auth.currentUser.uid), async (userDoc) => {
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        setFullName(userData.fullName || userData.name || "");
+        setProfilePic(userData.photoURL || null);
+        setBio(userData.bio || "");
+        setFollowersCount(Array.isArray(userData.followers) ? userData.followers.length : 0);
+        setFollowingCount(Array.isArray(userData.following) ? userData.following.length : 0);
+
+        const postsQuery = query(collection(db, 'user_activities'), where('user_id', '==', auth.currentUser.uid));
+        const postsSnapshot = await getDocs(postsQuery);
+        setPostsCount(postsSnapshot.size);
+
+        if (route?.params?.userId) {
+          setIsFollowing(userData.following?.includes(route.params.userId));
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, [route?.params?.userId]);
 
   useEffect(() => {
     const fetchActivities = async () => {
@@ -136,6 +164,7 @@ export default function Profile({ navigation, route }) {
   };
 
   return (
+    
     <View style={{ flex: 1, justifyContent: 'space-evenly', backgroundColor: theme.background }}>
         <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
@@ -238,35 +267,100 @@ export default function Profile({ navigation, route }) {
                     </View>
                     {/* Follow Button (centered, only for other users) */}
                     {auth.currentUser?.uid !== route?.params?.userId && (
-                        <View style={{ alignItems: 'center', marginTop: 18 }}>
-                            <TouchableOpacity
-                            style={{
-                                backgroundColor: theme.primary,
-                                borderRadius: 8,
-                                paddingVertical: 10,
-                                paddingHorizontal: 40,
-                                alignItems: 'center',
-                                width: 180,
-                            }}
-                            onPress={async () => {
-                                try {
-                                await updateDoc(doc(db, 'users', route.params.userId), {
-                                    followers: arrayUnion(auth.currentUser.uid)
+                      <View style={{ alignItems: 'center', marginTop: 18 }}>
+                        <TouchableOpacity
+                          style={{
+                            backgroundColor: isFollowing ? theme.background : theme.primary,
+                            borderRadius: 8,
+                            paddingVertical: 10,
+                            paddingHorizontal: 40,
+                            alignItems: 'center',
+                            width: 180,
+                            borderWidth: 1,
+                            borderColor: theme.primary,
+                          }}
+                          onPress={async () => {
+                            try {
+                              const currentUserRef = doc(db, 'users', auth.currentUser.uid);
+                              const targetUserRef = doc(db, 'users', route.params.userId);
+
+                              if (isFollowing) {
+                                await updateDoc(currentUserRef, {
+                                  following: arrayRemove(route.params.userId),
                                 });
-                                alert('You are now following this user!');
-                                } catch (err) {
-                                alert('Failed to follow user.');
-                                }
-                            }}
-                            >
-                            <Text style={{ color: theme.background, fontWeight: 'bold', fontSize: 16 }}>Follow</Text>
-                            </TouchableOpacity>
-                        </View>
+                                await updateDoc(targetUserRef, {
+                                  followers: arrayRemove(auth.currentUser.uid),
+                                });
+                                setIsFollowing(false);
+                              } else {
+                                await updateDoc(currentUserRef, {
+                                  following: arrayUnion(route.params.userId),
+                                });
+                                await updateDoc(targetUserRef, {
+                                  followers: arrayUnion(auth.currentUser.uid),
+                                });
+                                setIsFollowing(true);
+                              }
+
+                              // Refresh counts
+                              const updatedUserDoc = await getDoc(currentUserRef);
+                              if (updatedUserDoc.exists()) {
+                                const updatedData = updatedUserDoc.data();
+                                setFollowingCount(Array.isArray(updatedData.following) ? updatedData.following.length : 0);
+                              }
+                              const updatedTargetDoc = await getDoc(targetUserRef);
+                              if (updatedTargetDoc.exists()) {
+                                const updatedTargetData = updatedTargetDoc.data();
+                                setFollowersCount(Array.isArray(updatedTargetData.followers) ? updatedTargetData.followers.length : 0);
+                              }
+                            } catch (err) {
+                              alert('Failed to update follow status.');
+                            }
+                          }}
+                        >
+                          <Text style={{ color: isFollowing ? theme.primary : theme.background, fontWeight: 'bold', fontSize: 16 }}>
+                            {isFollowing ? "Unfollow" : "Follow"}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
                     )}
                 </View>
             </View>
             <View style={{ height: 1, backgroundColor: theme.placeholder, marginVertical: 16, width: '100%' }} />
             <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+                {/* Cigar Clubs Section */}
+                <View style={{ marginTop: 10, marginBottom: 24 }}>
+                  <Text style={{ color: theme.primary, fontWeight: 'bold', fontSize: 20, marginBottom: 12 }}>
+                    Cigar Clubs
+                  </Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    {clubs.length === 0 ? (
+                      <Text style={{ color: theme.placeholder, fontSize: 14, marginTop: 12 }}>No clubs yet</Text>
+                    ) : (
+                      clubs.map(club => (
+                        <TouchableOpacity
+                          key={club.id}
+                          style={{ alignItems: 'center', marginRight: 24 }}
+                          onPress={() => navigation.navigate('Clubs', { clubId: club.id })}
+                        >
+                          <Image
+                            source={{ uri: club.image || 'https://placehold.co/60x60?text=Club' }}
+                            style={{
+                              width: 60,
+                              height: 60,
+                              borderRadius: 30,
+                              backgroundColor: '#ccc',
+                              marginBottom: 6,
+                            }}
+                          />
+                          <Text style={{ color: theme.text, fontSize: 14, textAlign: 'center', maxWidth: 70 }}>
+                            {club.name}
+                          </Text>
+                        </TouchableOpacity>
+                      ))
+                    )}
+                  </ScrollView>
+                </View>
                 {/* User Posts */}
                 <View style={{ marginTop: 10 }}>
                     <Text style={{ color: theme.primary, fontWeight: 'bold', fontSize: 20, marginBottom: 12 }}>Your Posts</Text>

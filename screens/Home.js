@@ -1,19 +1,21 @@
 import React, { useEffect, useState, useRef, useCallback } from "react"
-import { StyleSheet, SafeAreaView, Text, View, TouchableOpacity, Image, Dimensions, ScrollView, TextInput, Modal, Pressable, Alert, Share } from "react-native"
+import { StyleSheet, TouchableWithoutFeedback, SafeAreaView, Text, View, TouchableOpacity, Image, Dimensions, ScrollView, TextInput, Alert, Share, RefreshControl, Modal } from "react-native"
 import { useFocusEffect } from '@react-navigation/native';
 import { auth, db } from "../config/firebase"
 import { onAuthStateChanged, getAuth } from 'firebase/auth';
 import { Ionicons } from '@expo/vector-icons'
 import { useTheme } from '../context/ThemeContext';
-import { doc, getDoc, collection, query, where, orderBy, onSnapshot, updateDoc, arrayUnion, arrayRemove, doc as firestoreDoc, deleteDoc } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, setDoc, orderBy, addDoc, onSnapshot, updateDoc, arrayUnion, arrayRemove, doc as firestoreDoc, deleteDoc, getDocs } from "firebase/firestore";
 import logo from '../img/logo.png';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function Home({ navigation }) {
     const { theme } = useTheme();
-    const [firstName, setFirstName] = useState("")
+    const [firstName, setFirstName] = useState("");
     const [activities, setActivities] = useState([]);
     const [userProfiles, setUserProfiles] = useState({}); 
+    const [following, setFollowing] = useState([]);
+    const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
     const isFirstLoad = useRef(true);
     const [commentInput, setCommentInput] = useState({});
     const [showCommentInput, setShowCommentInput] = useState({});
@@ -21,27 +23,55 @@ export default function Home({ navigation }) {
     const [selectedPost, setSelectedPost] = useState(null);
     const [popupPosition, setPopupPosition] = useState({ top: 0, left: 0 });
     const ellipsisRefs = useRef({});
+    const [refreshing, setRefreshing] = useState(false);
+    const [selectedComment, setSelectedComment] = useState(null);
+    const [commentOptionsVisible, setCommentOptionsVisible] = useState(false);
+    const [commentPopupPosition, setCommentPopupPosition] = useState({ top: 0, left: 0 });
+
+    const onRefresh = useCallback(async () => {
+      setRefreshing(true);
+      try {
+        if (typeof fetchFollowingAndPosts === 'function') {
+          await fetchFollowingAndPosts();
+        }
+      } catch (err) {
+        console.error('Error refreshing:', err);
+      }
+      setRefreshing(false);
+    }, []);
+
+    const fetchCommentsForActivity = async (activityId) => {
+      const commentsRef = collection(db, "user_activities", activityId, "comments");
+      const q = query(commentsRef, orderBy("createdAt", "asc"));
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    };
 
     // Fetch current user first name for greeting
     useEffect(() => {
       const unsubscribe = onAuthStateChanged(auth, async (user) => {
-        if (user) {
-          if (isFirstLoad.current) {
-            const docRef = doc(db, "users", user.uid);
-            const docSnap = await getDoc(docRef);
+        if (user && isFirstLoad.current) {
+          const docRef = doc(db, "users", user.uid);
+          const unsubUser = onSnapshot(docRef, (docSnap) => {
             if (docSnap.exists()) {
               const data = docSnap.data();
               const name = data.name || user.displayName || "User";
               setFirstName(name.split(' ')[0]);
-            } else {
-              setFirstName(user.displayName?.split(' ')[0] || "User");
+              setFollowing(data.following || []);
             }
-            isFirstLoad.current = false;
-          } else {
-            setFirstName(user.displayName?.split(' ')[0] || "User");
-          }
-        } else {
-          setFirstName("User");
+          });
+
+          const notificationsRef = collection(db, 'users', user.uid, 'notifications');
+          const q = query(notificationsRef, where('read', '==', false));
+          const unsubNotifications = onSnapshot(q, (snapshot) => {
+            setHasUnreadNotifications(!snapshot.empty);
+          });
+
+          isFirstLoad.current = false;
+          return () => {
+            unsubUser();
+            unsubNotifications();
+          };
         }
       });
       return () => unsubscribe();
@@ -64,7 +94,7 @@ export default function Home({ navigation }) {
               const newCount = count + 1;
               await AsyncStorage.setItem('homeVisitCount', newCount.toString());
 
-              if (newCount % 6 === 0) {
+              if (newCount % 10 === 0) {
                 navigation.navigate('Upgrade');
               }
             }
@@ -79,48 +109,68 @@ export default function Home({ navigation }) {
 
     // Fetch user activities and user profiles for each post author
     useEffect(() => {
-      const auth = getAuth();
-      const user = auth.currentUser;
+      const authInstance = getAuth();
+      const user = authInstance.currentUser;
       if (!user) return;
 
-      const q = query(
-        collection(db, "user_activities"),
-        where("user_id", "==", user.uid),
-        orderBy("date", "desc")
-      );
+      const fetchFollowingAndPosts = async () => {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          const following = userDoc.exists() ? userDoc.data()?.following || [] : [];
 
-      const unsubscribePosts = onSnapshot(q, async (querySnapshot) => {
-        const postsList = [];
-        const userIdsSet = new Set();
-
-        querySnapshot.forEach(doc => {
-          const data = { id: doc.id, ...doc.data() };
-          // Ensure comments array exists
-          if (!data.comments) data.comments = [];
-          postsList.push(data);
-          userIdsSet.add(data.user_id);
-        });
-
-        setActivities(postsList);
-
-        // Fetch all user profiles for userIds found in posts
-        const userProfilesMap = {};
-        await Promise.all(Array.from(userIdsSet).map(async (userId) => {
-          try {
-            const userDoc = await getDoc(doc(db, 'users', userId));
-            if (userDoc.exists()) {
-              userProfilesMap[userId] = userDoc.data();
-            }
-          } catch (err) {
-            console.error("Error fetching user profile for ", userId, err);
+          if (following.length === 0) {
+            setActivities([]);
+            return;
           }
-        }));
 
-        setUserProfiles(userProfilesMap);
-      });
+          const q = query(
+            collection(db, "user_activities"),
+            orderBy("date", "desc")
+          );
+          const unsubscribe = onSnapshot(q, async (querySnapshot) => {
+            const postsList = [];
+            const userIdsSet = new Set();
 
-      return () => unsubscribePosts();
-    }, []);
+            // Use Promise.all to fetch comments for each post
+            const postsWithComments = await Promise.all(
+              querySnapshot.docs.map(async docSnap => {
+                const postData = { id: docSnap.id, ...docSnap.data() };
+                if (following.includes(postData.user_id) || postData.user_id === user.uid) {
+                  userIdsSet.add(postData.user_id);
+                  // Fetch comments for this post
+                  postData.comments = await fetchCommentsForActivity(postData.id);
+                  return postData;
+                }
+                return null;
+              })
+            );
+
+            // Filter out nulls (posts not shown)
+            setActivities(postsWithComments.filter(Boolean));
+
+            // Fetch user profiles for the posts
+            const userProfilesMap = {};
+            await Promise.all(Array.from(userIdsSet).map(async (userId) => {
+              try {
+                const userSnap = await getDoc(doc(db, 'users', userId));
+                if (userSnap.exists()) {
+                  userProfilesMap[userId] = userSnap.data();
+                }
+              } catch (err) {
+                console.error("Error fetching profile for:", userId, err);
+              }
+            }));
+            setUserProfiles(userProfilesMap);
+          });
+
+          return () => unsubscribe();
+        } catch (err) {
+          console.error("Error fetching following or posts:", err);
+        }
+      };
+
+      fetchFollowingAndPosts();
+    }, [following]);
 
     const handleDeletePost = (postId) => {
       Alert.alert(
@@ -145,10 +195,57 @@ export default function Home({ navigation }) {
       );
     };
 
-    const handleUnfollow = (userId) => {
-      // TODO: Add your unfollow logic here
-      setModalVisible(false);
-      Alert.alert("Unfollowed", "You have unfollowed this user.");
+    useEffect(() => {
+      const q = query(collection(db, "user_activities"), orderBy("date", "desc"));
+      const unsubscribe = onSnapshot(q, async (querySnapshot) => {
+        const postsList = [];
+        const userIdsSet = new Set();
+
+        for (const docSnap of querySnapshot.docs) {
+          const postData = { id: docSnap.id, ...docSnap.data() };
+          if (following.includes(postData.user_id) || postData.user_id === user.uid) {
+            userIdsSet.add(postData.user_id);
+            // Fetch comments for this post
+            postData.comments = await fetchCommentsForActivity(postData.id);
+            postsList.push(postData);
+          }
+        }
+        setActivities(postsList);
+
+        const userProfilesMap = {};
+        await Promise.all(Array.from(userIdsSet).map(async (userId) => {
+          try {
+            const userSnap = await getDoc(doc(db, 'users', userId));
+            if (userSnap.exists()) {
+              userProfilesMap[userId] = userSnap.data();
+            }
+          } catch (err) {
+            console.error("Error fetching profile for:", userId, err);
+          }
+        }));
+        setUserProfiles(userProfilesMap);
+      });
+      return () => unsubscribe();
+    }, [following]);
+
+    const handleUnfollow = async (userId) => {
+      try {
+        const currentUserRef = doc(db, 'users', auth.currentUser.uid);
+        const targetUserRef = doc(db, 'users', userId);
+
+        await updateDoc(currentUserRef, {
+          following: arrayRemove(userId),
+        });
+        await updateDoc(targetUserRef, {
+          followers: arrayRemove(auth.currentUser.uid),
+        });
+        setFollowing(prev => prev.filter(id => id !== userId));
+        setModalVisible(false);
+        Alert.alert("Unfollowed", "You have unfollowed this user.");
+      } catch (err) {
+        console.error("Failed to unfollow:", err);
+        Alert.alert("Error", "Could not unfollow user.");
+      }
     };
 
     // Report handler
@@ -167,6 +264,17 @@ export default function Home({ navigation }) {
         await updateDoc(postRef, {
           likes: hasLiked ? arrayRemove(currentUserId) : arrayUnion(currentUserId)
         });
+        if (!hasLiked && activity.user_id !== currentUserId) {
+          // Only notify if it's a new like and not your own post
+          const notifRef = doc(collection(db, 'users', activity.user_id, 'notifications'));
+          await setDoc(notifRef, {
+            type: 'like',
+            fromUserId: currentUserId,
+            postId: activity.id,
+            timestamp: new Date(),
+            read: false,
+          });
+        }
       } catch (err) {
         console.error("Error updating like:", err);
       }
@@ -174,7 +282,16 @@ export default function Home({ navigation }) {
 
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
-          <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+          <ScrollView 
+            contentContainerStyle={{ paddingBottom: 40 }}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor={theme.primary}
+              />
+            }
+          >
             <View style={styles.headerRow}>
               <TouchableOpacity
                 style={styles.bellButton}
@@ -205,6 +322,17 @@ export default function Home({ navigation }) {
                 onPress={() => navigation.navigate('NotificationScreen')}
               >
                 <Ionicons name="notifications-outline" size={28} color={theme.primary} />
+                {hasUnreadNotifications && (
+                  <View style={{
+                    position: 'absolute',
+                    top: 2,
+                    right: -2,
+                    backgroundColor: 'red',
+                    width: 10,
+                    height: 10,
+                    borderRadius: 5
+                  }} />
+                )}
               </TouchableOpacity>
             </View>
             <View style={{ height: 1, backgroundColor: theme.placeholder, marginTop: 20, width: '100%' }} />
@@ -250,15 +378,141 @@ export default function Home({ navigation }) {
                           ref={ref => { if (ref) ellipsisRefs.current[activity.id] = ref; }}
                           style={{ padding: 4 }}
                           onPress={() => {
-                            ellipsisRefs.current[activity.id]?.measureInWindow((x, y, width, height) => {
-                              setPopupPosition({ top: y + height + 4, left: x - 60 }); // Shift further left (was -20)
-                              setSelectedPost(activity);
-                              setModalVisible(true);
-                            });
+                            // If already open for this post, close it
+                            if (modalVisible && selectedPost && selectedPost.id === activity.id) {
+                              setModalVisible(false);
+                              setSelectedPost(null);
+                              return;
+                            }
+                            setSelectedPost(activity);
+                            setModalVisible(true);
                           }}
                         >
                           <Ionicons name="ellipsis-vertical" size={22} color={theme.text} />
                         </TouchableOpacity>
+                        {/* Popup Modal for post options */}
+                        <Modal
+                          animationType="slide"
+                          transparent={true}
+                          visible={modalVisible}
+                          onRequestClose={() => setModalVisible(false)}
+                        >
+                          <TouchableWithoutFeedback onPress={() => setModalVisible(false)}>
+                            <View style={{
+                              flex: 1,
+                              justifyContent: 'flex-end',
+                              backgroundColor: 'rgba(0,0,0,0.4)',
+                            }}>
+                              <TouchableWithoutFeedback>
+                                <View style={{
+                                  backgroundColor: theme.background,
+                                  borderTopLeftRadius: 16,
+                                  borderTopRightRadius: 16,
+                                  paddingHorizontal: 20,
+                                  paddingTop: 12,
+                                  paddingBottom: 40,
+                                }}>
+                                  {selectedPost && (
+                                    <View style={{ marginBottom: 10 }}>
+                                      {selectedPost.user_id === auth.currentUser?.uid ? (
+                                        <>
+                                          <TouchableOpacity
+                                            style={styles.popupOption}
+                                            onPress={() => {
+                                              setModalVisible(false);
+                                              navigation.navigate('EditPost', { post: selectedPost });
+                                            }}
+                                          >
+                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                              <Ionicons name="create-outline" size={20} color={theme.primary} style={{ marginRight: 12 }} />
+                                              <Text style={{ color: theme.primary, fontWeight: 'bold' }}>Edit Post</Text>
+                                            </View>
+                                          </TouchableOpacity>
+                                          <TouchableOpacity
+                                            style={styles.popupOption}
+                                            onPress={() => {
+                                              setModalVisible(false);
+                                              handleDeletePost(selectedPost.id, selectedPost.user_id);
+                                            }}
+                                          >
+                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                              <Ionicons name="trash-outline" size={20} color="#d32f2f" style={{ marginRight: 12 }} />
+                                              <Text style={{ color: "#d32f2f", fontWeight: "bold" }}>Delete Post</Text>
+                                            </View>
+                                          </TouchableOpacity>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <TouchableOpacity
+                                            style={styles.popupOption}
+                                            onPress={() => {
+                                              setModalVisible(false);
+                                              handleReport();
+                                            }}
+                                          >
+                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                              <Ionicons name="flag-outline" size={20} color={theme.primary} style={{ marginRight: 12 }} />
+                                              <Text style={{ color: theme.primary }}>Report</Text>
+                                            </View>
+                                          </TouchableOpacity>
+                                          {following.includes(selectedPost.user_id) ? (
+                                            <TouchableOpacity
+                                              style={styles.popupOption}
+                                              onPress={() => {
+                                                setModalVisible(false);
+                                                handleUnfollow(selectedPost.user_id);
+                                              }}
+                                            >
+                                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                                <Ionicons name="person-remove-outline" size={20} color="#d32f2f" style={{ marginRight: 12 }} />
+                                                <Text style={{ color: "#d32f2f" }}>Unfollow</Text>
+                                              </View>
+                                            </TouchableOpacity>
+                                          ) : (
+                                            <TouchableOpacity
+                                              style={styles.popupOption}
+                                              onPress={async () => {
+                                                setModalVisible(false);
+                                                try {
+                                                  const currentUserRef = doc(db, 'users', auth.currentUser.uid);
+                                                  const targetUserRef = doc(db, 'users', selectedPost.user_id);
+                                                  await updateDoc(currentUserRef, {
+                                                    following: arrayUnion(selectedPost.user_id),
+                                                  });
+                                                  await updateDoc(targetUserRef, {
+                                                    followers: arrayUnion(auth.currentUser.uid),
+                                                  });
+                                                  setFollowing(prev => [...prev, selectedPost.user_id]);
+                                                  Alert.alert("Followed", "You are now following this user.");
+                                                } catch (err) {
+                                                  Alert.alert("Error", "Could not follow user.");
+                                                }
+                                              }}
+                                            >
+                                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                                <Ionicons name="person-add-outline" size={20} color={theme.primary} style={{ marginRight: 12 }} />
+                                                <Text style={{ color: theme.primary }}>Follow</Text>
+                                              </View>
+                                            </TouchableOpacity>
+                                          )}
+                                        </>
+                                      )}
+                                      <TouchableOpacity
+                                        style={styles.popupOption}
+                                        onPress={() => setModalVisible(false)}
+                                      >
+                                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                          <Ionicons name="close-outline" size={20} color={theme.text} style={{ marginRight: 12 }} />
+                                          <Text style={{ color: theme.text }}>Cancel</Text>
+                                        </View>
+                                      </TouchableOpacity>
+                                    </View>
+                                  )}
+                                </View>
+                              </TouchableWithoutFeedback>
+                            </View>
+                          </TouchableWithoutFeedback>
+                        </Modal>
                       </View>
                       <Text style={{ fontWeight: "bold", color: theme.text, fontSize: 22, marginBottom: 12 }}>
                         {activity.title}
@@ -363,16 +617,15 @@ export default function Home({ navigation }) {
                               if (!comment?.trim()) return;
 
                               try {
-                                const postRef = firestoreDoc(db, "user_activities", activity.id);
-                                await updateDoc(postRef, {
-                                  comments: arrayUnion({
+                                setCommentInput(prev => ({ ...prev, [activity.id]: '' }));
+                                if (activity.user_id !== auth.currentUser.uid) {
+                                  await addDoc(collection(db, "user_activities", activity.id, "comments"), {
                                     userId: auth.currentUser.uid,
                                     userName: auth.currentUser.displayName || "Anonymous",
                                     text: comment.trim(),
                                     createdAt: new Date()
-                                  })
-                                });
-                                setCommentInput(prev => ({ ...prev, [activity.id]: '' }));
+                                  });
+                                }
                               } catch (err) {
                                 console.error("Error adding comment:", err);
                               }
@@ -403,59 +656,110 @@ export default function Home({ navigation }) {
                       )}
                       {activity.comments && activity.comments.length > 0 && (
                         <View style={{ marginTop: 12 }}>
-                          {activity.comments.map((comment, index) => (
-                            <View key={index} style={{ marginBottom: 16 }}>
-                              {/* Increased marginBottom from 8 to 16 */}
-                              <Text style={{ fontWeight: '600', color: theme.text }}>{comment.userName || 'User'}</Text>
-                              <Text style={{ color: theme.text }}>{comment.text}</Text>
-                            </View>
-                          ))}
+                          {activity.comments.map((comment, index) => {
+                            const isCommentOwner = comment.userId === auth.currentUser?.uid;
+                            const isPostOwner = activity.user_id === auth.currentUser?.uid;
+                            const isOwnComment = isCommentOwner || isPostOwner;
+                            return (
+                              <View key={index} style={{ marginBottom: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={{ fontWeight: '600', color: theme.text }}>{comment.userName || 'User'}</Text>
+                                  <Text style={{ color: theme.text }}>{comment.text}</Text>
+                                </View>
+                                {isOwnComment && (
+                                  <TouchableOpacity onPress={() => {
+                                    setSelectedComment({ activityId: activity.id, comment });
+                                    setCommentOptionsVisible(true);
+                                  }}>
+                                    <Ionicons name="ellipsis-horizontal" size={20} color={theme.text} />
+                                  </TouchableOpacity>
+                                )}
+                              </View>
+                            );
+                          })}
                         </View>
                       )}
                       <View style={{ height: 1, backgroundColor: theme.placeholder, marginTop: 12, position: 'relative', left: -42, width: Dimensions.get('window').width }} />
                       {/* Modal for post options */}
                       <Modal
-                        animationType="fade"
+                        animationType="slide"
                         transparent={true}
-                        visible={modalVisible && selectedPost?.id === activity.id}
-                        onRequestClose={() => setModalVisible(false)}
+                        visible={commentOptionsVisible}
+                        onRequestClose={() => setCommentOptionsVisible(false)}
                       >
-                        <Pressable style={styles.modalOverlay} onPress={() => setModalVisible(false)}>
-                          <View
-                            style={[
-                              styles.popup,
-                              {
+                        <TouchableWithoutFeedback onPress={() => setCommentOptionsVisible(false)}>
+                          <View style={{
+                            flex: 1,
+                            justifyContent: 'flex-end',
+                            backgroundColor: 'rgba(0,0,0,0.4)',
+                          }}>
+                            <TouchableWithoutFeedback>
+                              <View style={{
                                 backgroundColor: theme.inputBackground || "#fff",
-                                position: "absolute",
-                                top: popupPosition.top,
-                                left: popupPosition.left,
-                                zIndex: 1000,
-                              },
-                            ]}
-                          >
-                            <TouchableOpacity
-                              style={styles.popupOption}
-                              onPress={handleReport}
-                            >
-                              <Text style={{ color: "#d32f2f", fontWeight: "400", fontSize: 16 }}>Report</Text>
-                            </TouchableOpacity>
-                            {isCurrentUser ? (
-                              <TouchableOpacity
-                                style={styles.popupOption}
-                                onPress={() => handleDeletePost(activity.id)}
-                              >
-                                <Text style={{ color: theme.primary, fontWeight: "400", fontSize: 16 }}>Delete</Text>
-                              </TouchableOpacity>
-                            ) : (
-                              <TouchableOpacity
-                                style={styles.popupOption}
-                                onPress={() => handleUnfollow(activity.user_id)}
-                              >
-                                <Text style={{ color: theme.text, fontWeight: "400", fontSize: 16 }}>Unfollow</Text>
-                              </TouchableOpacity>
-                            )}
+                                borderTopLeftRadius: 16,
+                                borderTopRightRadius: 16,
+                                paddingHorizontal: 20,
+                                paddingTop: 24,
+                                paddingBottom: 40,
+                              }}>
+                                {/* ✅ Report Option - only shown if current user is NOT the commenter */}
+                                {auth.currentUser?.uid !== selectedComment?.comment?.userId && (
+                                  <TouchableOpacity
+                                    onPress={() => {
+                                      Alert.alert("Reported", "Thank you for reporting this comment.");
+                                      setCommentOptionsVisible(false);
+                                    }}
+                                    style={{ paddingVertical: 16 }}
+                                  >
+                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                      <Ionicons name="flag-outline" size={20} color={theme.primary} style={{ marginRight: 12 }} />
+                                      <Text style={{ color: theme.primary, fontSize: 16 }}>Report</Text>
+                                    </View>
+                                  </TouchableOpacity>
+                                )}
+
+                                {/* ✅ Delete Option - only shown if commenter or post owner */}
+                                {(auth.currentUser?.uid === selectedComment?.comment?.userId ||
+                                  auth.currentUser?.uid === activity?.user_id) && (
+                                  <TouchableOpacity
+                                    onPress={async () => {
+                                      try {
+                                        const commentDocRef = doc(
+                                          db,
+                                          "user_activities",
+                                          selectedComment.activityId,
+                                          "comments",
+                                          selectedComment.comment.id
+                                        );
+                                        await deleteDoc(commentDocRef);
+                                        setCommentOptionsVisible(false);
+                                      } catch (err) {
+                                        Alert.alert("Error", "Could not delete comment.");
+                                      }
+                                    }}
+                                    style={{ paddingVertical: 16 }}
+                                  >
+                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                      <Ionicons name="trash-outline" size={20} color="#d32f2f" style={{ marginRight: 12 }} />
+                                      <Text style={{ color: "#d32f2f", fontWeight: "bold", fontSize: 16 }}>Delete Comment</Text>
+                                    </View>
+                                  </TouchableOpacity>
+                                )}
+
+                                {/* Cancel Option */}
+                                <TouchableOpacity
+                                  onPress={() => setCommentOptionsVisible(false)}
+                                  style={{ paddingVertical: 16 }}
+                                >
+                                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    <Ionicons name="close-outline" size={20} color={theme.primary} style={{ marginRight: 12 }} />
+                                    <Text style={{ color: theme.primary, fontSize: 16 }}>Cancel</Text>
+                                  </View>
+                                </TouchableOpacity>
+                              </View>
+                            </TouchableWithoutFeedback>
                           </View>
-                        </Pressable>
+                        </TouchableWithoutFeedback>
                       </Modal>
                     </View>
                   )
@@ -555,4 +859,9 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     fontSize: 16,
   },
+  popupOption: {
+  paddingVertical: 14,
+  borderBottomWidth: 0.5,
+  borderBottomColor: '#ccc',
+}
 })
