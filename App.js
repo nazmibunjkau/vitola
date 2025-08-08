@@ -28,6 +28,8 @@ import Upgrade from './screens/Upgrade';
 import ProfileSearch from './screens/ProfileSearch';
 import ClubAdditions from './components/ClubAdditions';
 import Clubs from './screens/Clubs';
+import ClubDetails from './components/ClubDetails';
+import Sessions from './screens/Sessions';
 
 const Stack = createStackNavigator()
 
@@ -79,6 +81,8 @@ function ThemeConsumer() {
             <Stack.Screen name='ProfileSearch' component={ProfileSearch} />
             <Stack.Screen name='ClubAdditions' component={ClubAdditions} />
             <Stack.Screen name='Clubs' component={Clubs} />
+            <Stack.Screen name='ClubDetails' component={ClubDetails} />
+            <Stack.Screen name='Sessions' component={Sessions} />
           </>
         ) : (
           <>

@@ -8,6 +8,7 @@ import { useTheme } from '../context/ThemeContext';
 import { doc, getDoc, collection, query, where, setDoc, orderBy, addDoc, onSnapshot, updateDoc, arrayUnion, arrayRemove, doc as firestoreDoc, deleteDoc, getDocs } from "firebase/firestore";
 import logo from '../img/logo.png';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 export default function Home({ navigation }) {
     const { theme } = useTheme();
@@ -21,12 +22,14 @@ export default function Home({ navigation }) {
     const [showCommentInput, setShowCommentInput] = useState({});
     const [modalVisible, setModalVisible] = useState(false);
     const [selectedPost, setSelectedPost] = useState(null);
-    const [popupPosition, setPopupPosition] = useState({ top: 0, left: 0 });
     const ellipsisRefs = useRef({});
     const [refreshing, setRefreshing] = useState(false);
     const [selectedComment, setSelectedComment] = useState(null);
     const [commentOptionsVisible, setCommentOptionsVisible] = useState(false);
-    const [commentPopupPosition, setCommentPopupPosition] = useState({ top: 0, left: 0 });
+    const [commentsByPost, setCommentsByPost] = useState({});
+    const commentListeners = useRef({});
+    // Add state for paid user
+    const [isPaidUser, setIsPaidUser] = useState(false);
 
     const onRefresh = useCallback(async () => {
       setRefreshing(true);
@@ -86,6 +89,8 @@ export default function Home({ navigation }) {
             const userSnap = await getDoc(userRef);
             const userData = userSnap.exists() ? userSnap.data() : {};
             const subscription = userData.subscriptionPlan || 'free';
+            // Set paid user state
+            setIsPaidUser(subscription !== 'free');
 
             // Only show Upgrade.js if user is on free plan
             if (subscription === 'free') {
@@ -106,71 +111,6 @@ export default function Home({ navigation }) {
         checkVisitCount();
       }, [])
     );
-
-    // Fetch user activities and user profiles for each post author
-    useEffect(() => {
-      const authInstance = getAuth();
-      const user = authInstance.currentUser;
-      if (!user) return;
-
-      const fetchFollowingAndPosts = async () => {
-        try {
-          const userDoc = await getDoc(doc(db, 'users', user.uid));
-          const following = userDoc.exists() ? userDoc.data()?.following || [] : [];
-
-          if (following.length === 0) {
-            setActivities([]);
-            return;
-          }
-
-          const q = query(
-            collection(db, "user_activities"),
-            orderBy("date", "desc")
-          );
-          const unsubscribe = onSnapshot(q, async (querySnapshot) => {
-            const postsList = [];
-            const userIdsSet = new Set();
-
-            // Use Promise.all to fetch comments for each post
-            const postsWithComments = await Promise.all(
-              querySnapshot.docs.map(async docSnap => {
-                const postData = { id: docSnap.id, ...docSnap.data() };
-                if (following.includes(postData.user_id) || postData.user_id === user.uid) {
-                  userIdsSet.add(postData.user_id);
-                  // Fetch comments for this post
-                  postData.comments = await fetchCommentsForActivity(postData.id);
-                  return postData;
-                }
-                return null;
-              })
-            );
-
-            // Filter out nulls (posts not shown)
-            setActivities(postsWithComments.filter(Boolean));
-
-            // Fetch user profiles for the posts
-            const userProfilesMap = {};
-            await Promise.all(Array.from(userIdsSet).map(async (userId) => {
-              try {
-                const userSnap = await getDoc(doc(db, 'users', userId));
-                if (userSnap.exists()) {
-                  userProfilesMap[userId] = userSnap.data();
-                }
-              } catch (err) {
-                console.error("Error fetching profile for:", userId, err);
-              }
-            }));
-            setUserProfiles(userProfilesMap);
-          });
-
-          return () => unsubscribe();
-        } catch (err) {
-          console.error("Error fetching following or posts:", err);
-        }
-      };
-
-      fetchFollowingAndPosts();
-    }, [following]);
 
     const handleDeletePost = (postId) => {
       Alert.alert(
@@ -200,16 +140,40 @@ export default function Home({ navigation }) {
       const unsubscribe = onSnapshot(q, async (querySnapshot) => {
         const postsList = [];
         const userIdsSet = new Set();
+        const newCommentListeners = {};
 
         for (const docSnap of querySnapshot.docs) {
           const postData = { id: docSnap.id, ...docSnap.data() };
-          if (following.includes(postData.user_id) || postData.user_id === user.uid) {
+          if (following.includes(postData.user_id) || postData.user_id === auth.currentUser?.uid) {
             userIdsSet.add(postData.user_id);
             // Fetch comments for this post
             postData.comments = await fetchCommentsForActivity(postData.id);
             postsList.push(postData);
+
+            // Set up a real-time listener for comments
+            if (!commentListeners.current[postData.id]) {
+              const commentsRef = collection(db, "user_activities", postData.id, "comments");
+              newCommentListeners[postData.id] = onSnapshot(
+                query(commentsRef, orderBy("createdAt", "asc")),
+                (snapshot) => {
+                  setCommentsByPost(prev => ({
+                    ...prev,
+                    [postData.id]: snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+                  }));
+                }
+              );
+            }
           }
         }
+        // Clean up old listeners
+        Object.keys(commentListeners.current).forEach(postId => {
+          if (!postsList.find(post => post.id === postId)) {
+            commentListeners.current[postId] && commentListeners.current[postId]();
+            delete commentListeners.current[postId];
+          }
+        });
+
+        commentListeners.current = { ...commentListeners.current, ...newCommentListeners };
         setActivities(postsList);
 
         const userProfilesMap = {};
@@ -225,27 +189,18 @@ export default function Home({ navigation }) {
         }));
         setUserProfiles(userProfilesMap);
       });
-      return () => unsubscribe();
+      return () => {
+        unsubscribe();
+        // Clean up all comment listeners
+        Object.values(commentListeners.current).forEach(unsub => unsub && unsub());
+        commentListeners.current = {};
+      };
     }, [following]);
 
-    const handleUnfollow = async (userId) => {
-      try {
-        const currentUserRef = doc(db, 'users', auth.currentUser.uid);
-        const targetUserRef = doc(db, 'users', userId);
-
-        await updateDoc(currentUserRef, {
-          following: arrayRemove(userId),
-        });
-        await updateDoc(targetUserRef, {
-          followers: arrayRemove(auth.currentUser.uid),
-        });
-        setFollowing(prev => prev.filter(id => id !== userId));
-        setModalVisible(false);
-        Alert.alert("Unfollowed", "You have unfollowed this user.");
-      } catch (err) {
-        console.error("Failed to unfollow:", err);
-        Alert.alert("Error", "Could not unfollow user.");
-      }
+    const handleUnfollow = async (targetUserId) => {
+      const functions = getFunctions();
+      const unfollow = httpsCallable(functions, 'unfollowUser');
+      await unfollow({ targetUserId });
     };
 
     // Report handler
@@ -300,22 +255,36 @@ export default function Home({ navigation }) {
                 <Ionicons name="person-add" size={28} marginLeft={20} color={theme.primary} />
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={[
-                  styles.upgradeButton,
-                  { backgroundColor: theme.primary, shadowColor: theme.text },
-                ]}
-                onPress={() => navigation.navigate('Upgrade')}
-              >
-                <Image
-                  source={logo}
+              {/* Upgrade button or logo depending on subscription */}
+              {isPaidUser ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 30 }}>
+                  <Image
+                    source={logo}
+                    style={[
+                      styles.paidUpgradeLogo,
+                      { backgroundColor: theme.background, marginRight: -10 },
+                    ]}
+                  />
+                  <Text style={{ color: theme.primary, fontWeight: '300', fontSize: 28 }}>Vitola</Text>
+                </View>
+              ) : (
+                <TouchableOpacity
                   style={[
-                    styles.upgradeLogo,
-                    { backgroundColor: theme.background },
+                    styles.upgradeButton,
+                    { backgroundColor: theme.primary, shadowColor: theme.text },
                   ]}
-                />
-                <Text style={[styles.upgradeText, { color: theme.background }]}>Upgrade</Text>
-              </TouchableOpacity>
+                  onPress={() => navigation.navigate('Upgrade')}
+                >
+                  <Image
+                    source={logo}
+                    style={[
+                      styles.upgradeLogo,
+                      { backgroundColor: theme.background },
+                    ]}
+                  />
+                  <Text style={[styles.upgradeText, { color: theme.background }]}>Upgrade</Text>
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity
                 style={styles.bellButton}
@@ -458,9 +427,31 @@ export default function Home({ navigation }) {
                                           {following.includes(selectedPost.user_id) ? (
                                             <TouchableOpacity
                                               style={styles.popupOption}
-                                              onPress={() => {
+                                              onPress={async () => {
                                                 setModalVisible(false);
-                                                handleUnfollow(selectedPost.user_id);
+                                                try {
+                                                  const currentUserRef = doc(db, 'users', auth.currentUser.uid);
+                                                  const targetUserRef = doc(db, 'users', selectedPost.user_id);
+
+                                                  await updateDoc(currentUserRef, {
+                                                    following: arrayRemove(selectedPost.user_id),
+                                                  });
+
+                                                  await updateDoc(targetUserRef, {
+                                                    followers: arrayRemove(auth.currentUser.uid),
+                                                  });
+
+                                                  // Update local following state
+                                                  setFollowing(prev => prev.filter(uid => uid !== selectedPost.user_id));
+
+                                                  // Optional: Notify Profile screen to update count (if using global state or context)
+                                                  // Example: useEventEmitter or state manager to trigger profile refetch
+
+                                                  Alert.alert("Unfollowed", "You have unfollowed this user.");
+                                                } catch (err) {
+                                                  console.error("Unfollow error:", err);  // Add console for debugging
+                                                  Alert.alert("Error", "Could not unfollow user.");
+                                                }
                                               }}
                                             >
                                               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -520,16 +511,16 @@ export default function Home({ navigation }) {
                       <Text style={{ color: theme.text, marginTop: 4, marginBottom: 16 }}>{activity.description}</Text>
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
                         <View style={{ alignItems: 'flex-start', flex: 1 }}>
-                          <Text style={{ fontSize: 12, fontWeight: 'bold', color: theme.text }}>Accessories</Text>
-                          <Text style={{ fontSize: 12, color: theme.placeholder }}>{activity.gearUsed || "N/A"}</Text>
+                          <Text style={{ fontSize: 14, fontWeight: 'bold', color: theme.text }}>Accessories</Text>
+                          <Text style={{ fontSize: 14, color: theme.placeholder }}>{activity.gearUsed || "N/A"}</Text>
                         </View>
                         <View style={{ alignItems: 'flex-start', flex: 1 }}>
-                          <Text style={{ fontSize: 12, fontWeight: 'bold', color: theme.text }}>Drink Pairing</Text>
-                          <Text style={{ fontSize: 12, color: theme.placeholder }}>{activity.drinkPairing || "N/A"}</Text>
+                          <Text style={{ fontSize: 14, fontWeight: 'bold', color: theme.text }}>Drink Pairing</Text>
+                          <Text style={{ fontSize: 14, color: theme.placeholder }}>{activity.drinkPairing || "N/A"}</Text>
                         </View>
                         <View style={{ alignItems: 'flex-start', flex: 1 }}>
-                          <Text style={{ fontSize: 12, fontWeight: 'bold', color: theme.text }}>Session Feel</Text>
-                          <Text style={{ fontSize: 12, color: theme.placeholder }}>{activity.sessionFeeling || "N/A"}</Text>
+                          <Text style={{ fontSize: 14, fontWeight: 'bold', color: theme.text }}>Session Feel</Text>
+                          <Text style={{ fontSize: 14, color: theme.placeholder }}>{activity.sessionFeeling || "N/A"}</Text>
                         </View>
                       </View>
                       {activity.media && (
@@ -618,12 +609,21 @@ export default function Home({ navigation }) {
 
                               try {
                                 setCommentInput(prev => ({ ...prev, [activity.id]: '' }));
+                                await addDoc(collection(db, "user_activities", activity.id, "comments"), {
+                                  userId: auth.currentUser.uid,
+                                  userName: auth.currentUser.displayName || "Anonymous",
+                                  text: comment.trim(),
+                                  createdAt: new Date()
+                                });
                                 if (activity.user_id !== auth.currentUser.uid) {
-                                  await addDoc(collection(db, "user_activities", activity.id, "comments"), {
-                                    userId: auth.currentUser.uid,
-                                    userName: auth.currentUser.displayName || "Anonymous",
-                                    text: comment.trim(),
-                                    createdAt: new Date()
+                                  const notifRef = doc(collection(db, 'users', activity.user_id, 'notifications'));
+                                  await setDoc(notifRef, {
+                                    type: 'comment',
+                                    fromUserId: auth.currentUser.uid,
+                                    postId: activity.id,
+                                    commentText: comment.trim(),
+                                    timestamp: new Date(),
+                                    read: false,
                                   });
                                 }
                               } catch (err) {
@@ -654,9 +654,9 @@ export default function Home({ navigation }) {
                           </TouchableOpacity>
                         </View>
                       )}
-                      {activity.comments && activity.comments.length > 0 && (
+                      {commentsByPost[activity.id] && commentsByPost[activity.id].length > 0 && (
                         <View style={{ marginTop: 12 }}>
-                          {activity.comments.map((comment, index) => {
+                          {commentsByPost[activity.id].map((comment, index) => {
                             const isCommentOwner = comment.userId === auth.currentUser?.uid;
                             const isPostOwner = activity.user_id === auth.currentUser?.uid;
                             const isOwnComment = isCommentOwner || isPostOwner;
@@ -767,7 +767,30 @@ export default function Home({ navigation }) {
               )}
             </View>
           </ScrollView>
-        </SafeAreaView>
+        {/* Floating "+" button */}
+        <TouchableOpacity
+          style={{
+            position: 'absolute',
+            bottom: 24,
+            right: 24,
+            backgroundColor: theme.primary,
+            width: 60,
+            height: 60,
+            borderRadius: 30,
+            justifyContent: 'center',
+            alignItems: 'center',
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.3,
+            shadowRadius: 4,
+            elevation: 5,
+            zIndex: 10,
+          }}
+          onPress={() => navigation.navigate('Sessions')}
+        >
+          <Ionicons name="add" size={32} color="#fff" />
+        </TouchableOpacity>
+      </SafeAreaView>
     )
 }
 
@@ -853,6 +876,12 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     marginRight: 10,
+    borderRadius: 11,
+  },
+  paidUpgradeLogo: {
+    width: 72,
+    height: 72,
+    marginRight: 20,
     borderRadius: 11,
   },
   upgradeText: {

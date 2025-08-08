@@ -122,7 +122,6 @@ export default function Sessions() {
           onPress: async () => {
             try {
               const humidorRef = doc(db, 'users', auth.currentUser.uid, 'humidors', item.id);
-              // Step 1: Delete cigars from the correct subcollection: humidor_cigars
               const cigarsRef = collection(db, 'users', auth.currentUser.uid, 'humidors', item.id, 'humidor_cigars');
               const snapshot = await getDocs(cigarsRef);
               const cigarDeletions = snapshot.docs.map(docSnap => deleteDoc(docSnap.ref));
@@ -131,17 +130,17 @@ export default function Sessions() {
               // Step 2: Delete the humidor document
               const docSnap = await getDoc(humidorRef);
               if (docSnap.exists()) {
-                console.log('✅ Deleting humidor:', humidorRef.path);
+                console.log('Deleting humidor:', humidorRef.path);
                 await deleteDoc(humidorRef);
 
                 setSelectedItems((prev) => prev.filter(i => i !== item));
                 if (selectedHumidor === item) setSelectedHumidor(null);
               } else {
-                console.warn('❌ Humidor document not found at:', humidorRef.path);
+                console.warn('Humidor document not found at:', humidorRef.path);
                 Alert.alert('Error', 'Humidor not found in database.');
               }
             } catch (error) {
-              console.error('❌ Failed to delete humidor and cigars:', error);
+              console.error('Failed to delete humidor and cigars:', error);
               Alert.alert('Error', 'Failed to delete humidor. Please try again.');
             }
           },

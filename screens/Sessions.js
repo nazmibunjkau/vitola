@@ -25,6 +25,7 @@ import { getAuth } from 'firebase/auth';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import Autocomplete from 'react-native-autocomplete-input';
 import cities from '../assets/cities.json';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 
 const sessionFeelings = ['Relaxing', 'Social', 'Celebratory', 'Reflective', 'Routine']
 
@@ -208,13 +209,17 @@ export default function SessionAdditions() {
     >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
         <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
-          <ScrollView
+          <KeyboardAwareScrollView
             contentContainerStyle={{ flexGrow: 1 }}
             keyboardShouldPersistTaps="handled"
+            extraScrollHeight={60} // adjust as needed
           >
             <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
               <View style={[styles.content, { flex: 1 }]}>
             <View style={[styles.header, { borderBottomColor: borderColorValue }]}>
+              <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+                <Ionicons name="arrow-back" size={30} color={theme.text} style={styles.leftArrow} />
+              </TouchableOpacity>
               <Text style={[styles.headerTitle, { color: theme.text }]}>Save Session</Text>
             </View>
             <TextInput
@@ -372,6 +377,8 @@ export default function SessionAdditions() {
                   />
                 </View>
 
+                <Ionicons name="chevron-down" size={18} color={theme.text} style={{ alignSelf: 'center', marginLeft: 6 }} />
+
                 {!!locationQuery && (
                   <TouchableOpacity
                     onPress={() => {
@@ -432,7 +439,7 @@ export default function SessionAdditions() {
             </TouchableOpacity>
                     
             {/* Spacer so content doesn't get hidden under fixed button */}
-            <View style={{ height: 80 }} />
+            <View style={{ height: 20 }} />
 
             {/* Modals */}
             {/* Humidor Modal */}
@@ -445,7 +452,7 @@ export default function SessionAdditions() {
                         styles.bottomSheet,
                         {
                           backgroundColor: theme.background,
-                          height: Math.min(Math.max(humidors.length * 50, 180), screenHeight * 0.5),
+                          height: Math.min(Math.max(humidors.length * 130, 180), screenHeight * 0.8),
                         },
                       ]}
                     >
@@ -482,7 +489,7 @@ export default function SessionAdditions() {
                         >
                           <Ionicons
                             name={selectedHumidor?.id === item.id ? 'radio-button-on' : 'radio-button-off'}
-                            size={20}
+                            size={28}
                             color={theme.primary}
                             style={{ marginRight: 10 }}
                           />
@@ -595,7 +602,7 @@ export default function SessionAdditions() {
             </Modal>
               </View>
             </TouchableWithoutFeedback>
-          </ScrollView>
+          </KeyboardAwareScrollView>
           <View style={[styles.fixedBottomButton, { backgroundColor: theme.background, borderTopColor: theme.placeholder }]}>
             <TouchableOpacity style={[styles.saveButton, { backgroundColor: theme.primary }]} onPress={handleSave}>
               <Text style={[styles.saveText, { color: theme.background }]}>Save Activity</Text>
@@ -699,7 +706,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   modalText: {
-    fontSize: 16,
+    fontSize: 18,
   },
   mediaBox: {
     borderWidth: 1,
@@ -750,7 +757,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     paddingHorizontal: 20,
-    paddingBottom: 10,
+    paddingBottom: 20,
     borderTopWidth: 1,
   },
   bottomSheet: {
@@ -765,7 +772,7 @@ const styles = StyleSheet.create({
     height: 300
   },
   bottomSheetTitle: {
-    fontSize: 16,
+    fontSize: 20,
     fontWeight: 'bold',
     marginBottom: 12,
   },

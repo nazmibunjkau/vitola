@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { ArrowLeftIcon } from "react-native-heroicons/solid"
 import { useTheme } from '../context/ThemeContext'; 
 import { getAuth } from 'firebase/auth';
-import { doc, getDocs, collection, getDoc, updateDoc, arrayUnion, addDoc, arrayRemove, setDoc } from 'firebase/firestore';
+import { doc, getDocs, collection, getDoc, updateDoc, arrayUnion, addDoc, arrayRemove, setDoc, deleteDoc, collectionGroup } from 'firebase/firestore';
 import { db } from '../config/firebase'; 
 
 export default function ProfileSearch({ navigation }) {
@@ -15,6 +15,9 @@ export default function ProfileSearch({ navigation }) {
   const [profiles, setProfiles] = useState([]);
   const [filteredProfiles, setFilteredProfiles] = useState([]);
   const [followedUserIds, setFollowedUserIds] = useState([]);
+  const [clubs, setClubs] = useState([]);
+  const [filteredClubs, setFilteredClubs] = useState([]);
+  const [joinedClubIds, setJoinedClubIds] = useState([]);
 
   const fetchUsers = async () => {
     const auth = getAuth();
@@ -38,6 +41,25 @@ export default function ProfileSearch({ navigation }) {
     }
   };
 
+  const fetchClubs = async () => {
+    try {
+      const snapshot = await getDocs(collection(db, 'clubs'));
+      let allClubs = await Promise.all(snapshot.docs.map(async doc => {
+        const memberSnap = await getDocs(collection(db, 'clubs', doc.id, 'members'));
+        return {
+          id: doc.id,
+          ...doc.data(),
+          memberCount: memberSnap.size
+        };
+      }));
+      const unjoinedClubs = allClubs.filter(club => !joinedClubIds.includes(club.id));
+      const shuffled = unjoinedClubs.sort(() => 0.5 - Math.random()).slice(0, 100);
+      setClubs(shuffled);
+    } catch (err) {
+      console.error('Error fetching clubs:', err);
+    }
+  };
+
   // Fetch followed user IDs for the current user
   const fetchFollowedUserIds = async () => {
     const auth = getAuth();
@@ -55,10 +77,27 @@ export default function ProfileSearch({ navigation }) {
     }
   };
 
+  const fetchJoinedClubIds = async () => {
+    const auth = getAuth();
+    const currentUser = auth.currentUser;
+    if (!currentUser) return;
+
+    try {
+      const snapshot = await getDocs(collectionGroup(db, 'members'));
+      const joinedIds = snapshot.docs
+        .filter(doc => doc.id === currentUser.uid)
+        .map(doc => doc.ref.parent.parent.id); // get clubId from /clubs/{clubId}/members/{uid}
+      setJoinedClubIds(joinedIds);
+    } catch (err) {
+      console.error('Error fetching joined clubs:', err);
+    }
+  };
+
   useEffect(() => {
     const fetchSubscriptionAndData = async () => {
       await fetchSubscription();
       await fetchFollowedUserIds();
+      await fetchJoinedClubIds();
     };
     // Moved fetchSubscription out of useEffect so it's accessible here
     async function fetchSubscription() {
@@ -83,27 +122,38 @@ export default function ProfileSearch({ navigation }) {
   }, [followedUserIds]);
 
   useEffect(() => {
-    const searchProfiles = async () => {
+    if (joinedClubIds) {
+      fetchClubs();
+    }
+  }, [joinedClubIds]);
+
+  // Profiles search effect
+  useEffect(() => {
+    if (activeTab === 'Profiles') {
       if (!searchQuery.trim()) {
         setFilteredProfiles(profiles);
-        return;
+      } else {
+        const filtered = profiles.filter(user =>
+          user.name?.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+        setFilteredProfiles(filtered);
       }
-      try {
-        const snapshot = await getDocs(collection(db, 'users'));
-        const matches = snapshot.docs
-          .map(doc => ({ id: doc.id, ...doc.data() }))
-          .filter(user =>
-            user.name?.toLowerCase().includes(searchQuery.toLowerCase())
-          )
-          .filter(user => user.id !== getAuth().currentUser?.uid);
-        setFilteredProfiles(matches);
-      } catch (err) {
-        console.error('Error searching users:', err);
-      }
-    };
+    }
+  }, [searchQuery, profiles, activeTab]);
 
-    searchProfiles();
-  }, [searchQuery, profiles]);
+  // Clubs search effect
+  useEffect(() => {
+    if (activeTab === 'Clubs') {
+      if (!searchQuery.trim()) {
+        setFilteredClubs(clubs);
+      } else {
+        const filtered = clubs.filter(club =>
+          club.name?.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+        setFilteredClubs(filtered);
+      }
+    }
+  }, [searchQuery, clubs, activeTab]);
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
@@ -271,18 +321,78 @@ export default function ProfileSearch({ navigation }) {
         <View style={{ flex: 1 }} />
       )}
     {activeTab === 'Clubs' && (
-      <TouchableOpacity
-        style={[styles.fab, { backgroundColor: theme.primary }]}
-        onPress={() => {
-          if (userSubscription === 'free') {
-            navigation.navigate('Upgrade');
-          } else {
-            navigation.navigate('ClubAdditions');
-          }
-        }}
-      >
-        <Ionicons name="add" size={32} color={theme.iconOnPrimary} />
-      </TouchableOpacity>
+      <>
+        <FlatList
+          data={searchQuery.length > 0 ? filteredClubs : clubs}
+          keyExtractor={item => item.id}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 0, paddingBottom: 500 }}
+          renderItem={({ item }) => {
+            const isJoined = joinedClubIds.includes(item.id);
+            return (
+              <View style={[styles.profileRow, { borderColor: theme.border }]}>
+                <Image source={{ uri: item.image || 'https://placehold.co/50x50' }} style={styles.profilePic} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.profileName, { color: theme.text }]}>{item.name || 'Unnamed Club'}</Text>
+                  <Text style={{ color: theme.placeholder, fontSize: 13 }}>
+                    {item.memberCount?.toLocaleString()} members • {item.location || 'Unknown'}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={async () => {
+                    const auth = getAuth();
+                    const currentUser = auth.currentUser;
+                    if (!currentUser) return;
+
+                    const userId = currentUser.uid;
+                    const clubId = item.id;
+
+                    try {
+                      const userClubRef = doc(db, 'users', userId, 'joined_clubs', clubId);
+                      const clubMemberRef = doc(db, 'clubs', clubId, 'members', userId);
+
+                      if (isJoined) {
+                        await deleteDoc(userClubRef);
+                        await deleteDoc(clubMemberRef);
+                        setJoinedClubIds(prev => prev.filter(id => id !== clubId));
+                      } else {
+                        await setDoc(userClubRef, { joinedAt: new Date() });
+                        await setDoc(clubMemberRef, { role: 'member', joinedAt: new Date() });
+                        setJoinedClubIds(prev => [...prev, clubId]);
+                      }
+                    } catch (error) {
+                      console.error('Error updating join status:', error);
+                    }
+                  }}
+                  style={[
+                    styles.followButton,
+                    {
+                      borderWidth: 1,
+                      borderColor: isJoined ? theme.primary : theme.primary,
+                      backgroundColor: isJoined ? theme.primary : theme.background
+                    }
+                  ]}
+                >
+                  <Text style={{ color: isJoined ? '#fff' : theme.primary }}>
+                    {isJoined ? 'Leave' : 'Join'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            );
+          }}
+        />
+        <TouchableOpacity
+          style={[styles.fab, { backgroundColor: theme.primary }]}
+          onPress={() => {
+            if (userSubscription === 'free') {
+              navigation.navigate('Upgrade');
+            } else {
+              navigation.navigate('ClubAdditions');
+            }
+          }}
+        >
+          <Ionicons name="add" size={32} color={theme.iconOnPrimary} />
+        </TouchableOpacity>
+      </>
     )}
     </SafeAreaView>
   );

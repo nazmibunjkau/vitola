@@ -26,26 +26,31 @@ export default function Profile({ navigation, route }) {
   const [clubs, setClubs] = useState([]);
 
   useEffect(() => {
-    // Fetch clubs created by the user
+    // Fetch clubs the user has joined
     const fetchClubs = async () => {
       try {
         const clubsRef = collection(db, 'clubs');
         const snapshot = await getDocs(clubsRef);
         const userClubs = [];
-        snapshot.forEach(docSnap => {
-          const data = docSnap.data();
-          // Assuming you store the creator's userId as "createdBy"
-          if (data.createdBy === auth.currentUser.uid) {
+
+        for (const docSnap of snapshot.docs) {
+          const clubId = docSnap.id;
+          const memberDocRef = doc(db, 'clubs', clubId, 'members', auth.currentUser.uid);
+          const memberDocSnap = await getDoc(memberDocRef);
+
+          if (memberDocSnap.exists()) {
+            const data = docSnap.data();
             userClubs.push({
-              id: docSnap.id,
+              id: clubId,
               name: data.name,
               image: data.image,
             });
           }
-        });
+        }
+
         setClubs(userClubs);
       } catch (err) {
-        console.error("Error fetching clubs:", err);
+        console.error("Error fetching joined clubs:", err);
       }
     };
     fetchClubs();
@@ -341,7 +346,7 @@ export default function Profile({ navigation, route }) {
                         <TouchableOpacity
                           key={club.id}
                           style={{ alignItems: 'center', marginRight: 24 }}
-                          onPress={() => navigation.navigate('Clubs', { clubId: club.id })}
+                          onPress={() => navigation.navigate('ClubDetails', { club })}
                         >
                           <Image
                             source={{ uri: club.image || 'https://placehold.co/60x60?text=Club' }}

@@ -421,7 +421,7 @@ export default function ClubAdditions({ navigation }) {
                   name: clubName.trim(),
                   description: description.trim(),
                   image,
-                  type: selectedType,
+                  type: CLUB_TYPES.find(t => t.id === selectedType)?.name || selectedType,
                   tags: selectedTags,
                   privacy: selectedPrivacy,
                   location: selectedLocation,

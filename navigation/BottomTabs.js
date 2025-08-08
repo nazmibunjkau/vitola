@@ -6,6 +6,7 @@ import Humidor from "../screens/Humidor";
 import Scanner from "../screens/Scanner";
 import Sessions from "../screens/Sessions";
 import Profile from "../screens/Profile";
+import Clubs from "../screens/Clubs";
 import { useRoute } from "@react-navigation/native";
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
@@ -61,13 +62,13 @@ export default function BottomTabs() {
         }}
       />
       <Tab.Screen
-        name="Sessions"
-        component={Sessions}
+        name="Scanner"
+        component={Scanner}
         options={{
           tabBarIcon: ({ focused }) => (
             <View style={styles.icon}>
               <Ionicons
-                name={focused ? 'add-circle' : 'add-circle-outline'}
+                name={focused ? 'scan' : 'scan-outline'}
                 size={24}
                 color={theme.primary}
               />
@@ -77,13 +78,13 @@ export default function BottomTabs() {
         }}
       />
       <Tab.Screen
-        name="Scanner"
-        component={Scanner}
+        name="Clubs"
+        component={Clubs}
         options={{
           tabBarIcon: ({ focused }) => (
             <View style={styles.icon}>
               <Ionicons
-                name={focused ? 'scan' : 'scan-outline'}
+                name={focused ? 'people' : 'people-outline'}
                 size={24}
                 color={theme.primary}
               />
@@ -101,7 +102,7 @@ export default function BottomTabs() {
           tabBarIcon: ({ focused }) => (
             <View style={styles.icon}>
               <Ionicons
-                name={focused ? 'person' : 'person-outline'}
+                name={focused ? 'person-circle' : 'person-circle-outline'}
                 size={24}
                 color={theme.primary}
               />

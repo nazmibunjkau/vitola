@@ -305,7 +305,7 @@ export default function HumidorAdditions() {
             marginRight: 10,
           }}
         >
-          <Text style={{ color: theme.background, fontSize: 22, fontWeight: 'bold' }}>-</Text>
+          <Text style={{ color: theme.background, fontSize: 22, fontWeight: 'bold', marginBottom: 3 }}>-</Text>
         </TouchableOpacity>
         <Text style={{ fontSize: 18, fontWeight: 'bold', color: theme.text, minWidth: 32, textAlign: 'center' }}>
           {item.quantity || 1}
@@ -322,7 +322,7 @@ export default function HumidorAdditions() {
             marginLeft: 10,
           }}
         >
-          <Text style={{ color: theme.background, fontSize: 22, fontWeight: 'bold' }}>+</Text>
+          <Text style={{ color: theme.background, fontSize: 22, fontWeight: 'bold', marginBottom: 3 }}>+</Text>
         </TouchableOpacity>
       </View>
     </View>
