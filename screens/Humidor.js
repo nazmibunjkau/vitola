@@ -21,6 +21,7 @@ import {
   getDocs,
 } from 'firebase/firestore'
 import { getDoc } from 'firebase/firestore';
+import { onAuthStateChanged, getAuth } from 'firebase/auth';
 
 export default function Sessions() {
   const navigation = useNavigation()
@@ -36,6 +37,9 @@ export default function Sessions() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState([]);
   const [selectedHumidor, setSelectedHumidor] = useState(null)
+  // Live cigar counts per humidor
+  const [cigarCounts, setCigarCounts] = useState({});
+  const cigarListenersRef = useRef({});
 
   // Sort pop-up state and handlers
   const [sortPopupVisible, setSortPopupVisible] = useState(false);
@@ -53,40 +57,137 @@ export default function Sessions() {
   };
 
   useEffect(() => {
-    if (!auth.currentUser) return;
+    const authInst = getAuth();
+    let unsubscribe = null; // firestore unsubscriber
 
-    // Fetch subscription plan
-    const fetchSubscriptionPlan = async () => {
-      const userDocRef = doc(db, 'users', auth.currentUser.uid);
-      const userDocSnap = await getDoc(userDocRef);
-      if (userDocSnap.exists()) {
-        setSubscriptionPlan(userDocSnap.data()?.subscriptionPlan || 'free');
+    const stopAuth = onAuthStateChanged(authInst, async (u) => {
+      // Tear down any previous listener when auth state changes
+      if (unsubscribe) {
+        unsubscribe();
+        unsubscribe = null;
       }
-    };
-    fetchSubscriptionPlan();
-
-    const q = query(
-      collection(db, 'users', auth.currentUser.uid, 'humidors'),
-      orderBy('createdAt', 'desc')
-    );
-
-    const unsubscribe = onSnapshot(q, async (querySnapshot) => {
-      const humidorsData = [];
-      querySnapshot.forEach((doc) => {
-        humidorsData.push({ id: doc.id, ...doc.data() });
+      // Clean up any per-humidor cigars listeners from previous user/session
+      Object.values(cigarListenersRef.current).forEach(unsub => {
+        try { unsub && unsub(); } catch (e) {}
       });
-      // Enrich each humidor with cigar count
-      const enrichedHumidors = await Promise.all(humidorsData.map(async (h) => {
-        const cigarSnap = await getDocs(collection(db, 'users', auth.currentUser.uid, 'humidors', h.id, 'cigars'));
-        return {
-          ...h,
-          cigarCount: cigarSnap.docs.filter(doc => !doc.data().placeholder).length,
-        };
-      }));
-      setHumidor(enrichedHumidors);
+      cigarListenersRef.current = {};
+      setCigarCounts({});
+
+      if (!u) {
+        // signed out – nothing to listen to
+        return;
+      }
+
+      // Fetch subscription plan once for this user
+      try {
+        const userDocRef = doc(db, 'users', u.uid);
+        const userDocSnap = await getDoc(userDocRef);
+        if (userDocSnap.exists()) {
+          setSubscriptionPlan(userDocSnap.data()?.subscriptionPlan || 'free');
+        }
+      } catch (e) {
+        console.error('Failed to fetch subscription plan:', e);
+      }
+
+      const qRef = query(
+        collection(db, 'users', u.uid, 'humidors'),
+        orderBy('createdAt', 'desc')
+      );
+
+      unsubscribe = onSnapshot(
+        qRef,
+        async (querySnapshot) => {
+          try {
+            const humidorsData = [];
+            querySnapshot.forEach((docSnap) => {
+              humidorsData.push({ id: docSnap.id, ...docSnap.data() });
+            });
+
+            // Update the base humidors list right away
+            setHumidor(humidorsData);
+
+            // Remove listeners for humidors that no longer exist
+            const currentIds = new Set(humidorsData.map(h => h.id));
+            Object.keys(cigarListenersRef.current).forEach(hid => {
+              if (!currentIds.has(hid)) {
+                try { cigarListenersRef.current[hid](); } catch (e) {}
+                delete cigarListenersRef.current[hid];
+                setCigarCounts(prev => { const { [hid]: _, ...rest } = prev; return rest; });
+              }
+            });
+
+            // For each humidor, ensure a live listener on cigars subcollection that SUMS quantities
+            for (const h of humidorsData) {
+              if (cigarListenersRef.current[h.id]) continue; // already listening
+              const cigarsCol = collection(db, 'users', u.uid, 'humidors', h.id, 'cigars');
+              cigarListenersRef.current[h.id] = onSnapshot(
+                cigarsCol,
+                async (snap) => {
+                  try {
+                    let sum = 0;
+                    snap.forEach(d => {
+                      const q = d.data()?.quantity;
+                      sum += (typeof q === 'number' && !isNaN(q) ? q : 1);
+                    });
+
+                    // If the new path is empty, try legacy path once as a fallback
+                    if (sum === 0) {
+                      try {
+                        const legacyCol = collection(db, 'users', u.uid, 'humidors', h.id, 'humidor_cigars');
+                        const legacySnap = await getDocs(legacyCol);
+                        let legacySum = 0;
+                        legacySnap.forEach(ld => {
+                          const ql = ld.data()?.quantity;
+                          legacySum += (typeof ql === 'number' && !isNaN(ql) ? ql : 1);
+                        });
+                        sum = legacySum;
+                      } catch (legacyErr) {
+                        // ignore permission-denied here; just keep sum as-is
+                      }
+                    }
+
+                    setCigarCounts(prev => ({ ...prev, [h.id]: sum }));
+                  } catch (calcErr) {
+                    // Keep previous value on error
+                  }
+                },
+                (err) => {
+                  // If subcollection read fails, attempt one-time legacy fetch
+                  (async () => {
+                    try {
+                      const legacyCol = collection(db, 'users', u.uid, 'humidors', h.id, 'humidor_cigars');
+                      const legacySnap = await getDocs(legacyCol);
+                      let sum = 0;
+                      legacySnap.forEach(ld => {
+                        const ql = ld.data()?.quantity;
+                        sum += (typeof ql === 'number' && !isNaN(ql) ? ql : 1);
+                      });
+                      setCigarCounts(prev => ({ ...prev, [h.id]: sum }));
+                    } catch (e2) {
+                      if (err?.code !== 'permission-denied') console.error('Cigars listener error:', err);
+                    }
+                  })();
+                }
+              );
+            }
+          } catch (e) {
+            console.error('Humidor snapshot processing failed:', e);
+          }
+        },
+        (err) => {
+          if (err?.code !== 'permission-denied') console.error('Humidor listener error:', err);
+        }
+      );
     });
 
-    return () => unsubscribe();
+    return () => {
+      stopAuth();
+      if (unsubscribe) unsubscribe();
+      Object.values(cigarListenersRef.current).forEach(unsub => {
+        try { unsub && unsub(); } catch (e) {}
+      });
+      cigarListenersRef.current = {};
+    };
   }, []);
 
   useEffect(() => {
@@ -122,10 +223,23 @@ export default function Sessions() {
           onPress: async () => {
             try {
               const humidorRef = doc(db, 'users', auth.currentUser.uid, 'humidors', item.id);
-              const cigarsRef = collection(db, 'users', auth.currentUser.uid, 'humidors', item.id, 'humidor_cigars');
-              const snapshot = await getDocs(cigarsRef);
-              const cigarDeletions = snapshot.docs.map(docSnap => deleteDoc(docSnap.ref));
-              await Promise.all(cigarDeletions);
+              // Delete from both possible subcollections
+              const cigarsRefNew = collection(db, 'users', auth.currentUser.uid, 'humidors', item.id, 'cigars');
+              const cigarsRefLegacy = collection(db, 'users', auth.currentUser.uid, 'humidors', item.id, 'humidor_cigars');
+
+              try {
+                const snapNew = await getDocs(cigarsRefNew);
+                await Promise.all(snapNew.docs.map(docSnap => deleteDoc(docSnap.ref)));
+              } catch (e) {
+                if (e?.code !== 'permission-denied') console.warn('Could not delete cigars (new path):', e);
+              }
+
+              try {
+                const snapLegacy = await getDocs(cigarsRefLegacy);
+                await Promise.all(snapLegacy.docs.map(docSnap => deleteDoc(docSnap.ref)));
+              } catch (e) {
+                if (e?.code !== 'permission-denied') console.warn('Could not delete cigars (legacy path):', e);
+              }
 
               // Step 2: Delete the humidor document
               const docSnap = await getDoc(humidorRef);
@@ -216,26 +330,26 @@ export default function Sessions() {
                 <Ionicons
                   name={selectedItems.includes(item) ? 'checkbox' : 'square-outline'}
                   size={24}
-                  color={theme.accent}
+                  color={theme.background}
                   style={{ marginRight: 10 }}
                 />
               </TouchableOpacity>
             )}
             <View>
-              <Text style={[styles.humidorTitle, { color: theme.accent }]} numberOfLines={1}>
+              <Text style={[styles.humidorTitle, { color: theme.background }]} numberOfLines={1}>
                 {item.title}
               </Text>
-              <Text style={[styles.humidorDate, { color: theme.accent }]}>
+              <Text style={[styles.humidorDate, { color: theme.background }]}>
                 {item.createdAt && item.createdAt.toDate ? format(item.createdAt.toDate(), 'PPP p') : ''}
               </Text>
-              <Text style={{ color: theme.accent, marginTop: 2 }}>
-                {item.cigarCount ?? 0} cigars   ·   <Text style={{ color: item.humidor_status === 'active' ? 'green' : 'red' }}>
+              <Text style={{ color: theme.background, marginTop: 2 }}>
+                {(cigarCounts[item.id] ?? 0)} cigars   ·   <Text style={{ color: item.humidor_status === 'active' ? 'green' : 'red' }}>
                   {item.humidor_status === 'active' ? 'Active' : 'Inactive'}
                 </Text>
               </Text>
             </View>
           </View>
-          <Ionicons name="chevron-forward" size={24} color={theme.accent} />
+          <Ionicons name="chevron-forward" size={24} color={theme.background} />
         </View>
       </TouchableOpacity>
     </Swipeable>
@@ -252,15 +366,15 @@ export default function Sessions() {
             ref={sortButtonRef}
             onPress={handleSortPress}
             style={{
-              backgroundColor: theme.accent,
+              backgroundColor: '#f5f5f5',
               borderRadius: 20,
               padding: 6,
               marginRight: 10,
               borderWidth: 1,
-              borderColor: theme.primary,
+              borderColor: '#4b382a',
             }}
           >
-            <Ionicons name="swap-vertical" size={18} color={theme.primary} />
+            <Ionicons name="swap-vertical" size={18} color={'#4b382a'} />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => {
@@ -268,15 +382,15 @@ export default function Sessions() {
               setSelectedItems([]);
             }}
             style={{
-              backgroundColor: theme.accent,
+              backgroundColor: '#f5f5f5',
               borderRadius: 20,
               paddingHorizontal: 16,
               paddingVertical: 6,
               borderWidth: 1,
-              borderColor: theme.primary,
+              borderColor: '#4b382a',
             }}
           >
-            <Text style={{ color: theme.primary, fontWeight: 'bold' }}>
+            <Text style={{ color: '#4b382a', fontWeight: 'bold' }}>
               {selectionMode ? 'Cancel' : 'Select'}
             </Text>
           </TouchableOpacity>
@@ -290,13 +404,13 @@ export default function Sessions() {
         borderRadius: 8,
         margin: 16,
         paddingHorizontal: 10,
-        backgroundColor: theme.accent,
+        backgroundColor: "#f5f5f5",
       }}>
-        <Ionicons name="search-outline" size={20} color={theme.primary} />
+        <Ionicons name="search-outline" size={20} color={'#4b382a'} />
         <TextInput
-          style={{ flex: 1, height: 40, marginLeft: 8, color: theme.text }}
+          style={{ flex: 1, height: 40, marginLeft: 8, color: '#4b382a' }}
           placeholder="Search Humidors..."
-          placeholderTextColor={theme.placeholder}
+          placeholderTextColor={'#4b382a'}
           onChangeText={setSearchQuery}
           value={searchQuery}
           onSubmitEditing={() => Keyboard.dismiss()}
@@ -312,7 +426,7 @@ export default function Sessions() {
         <View style={{
           flexDirection: 'row',
           justifyContent: 'space-between',
-          backgroundColor: theme.accent,
+          backgroundColor: '#f5f5f5',
           paddingVertical: 12,
           paddingHorizontal: 20,
           borderRadius: 12,
@@ -326,7 +440,7 @@ export default function Sessions() {
             setRenameValue(selectedItems[0].title);
             setRenameModalVisible(true);
           }}>
-            <Text style={{ color: theme.primary, fontWeight: 'bold', fontSize: 16 }}>Rename</Text>
+            <Text style={{ color: '#4b382a', fontWeight: 'bold', fontSize: 16 }}>Rename</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => {
             selectedItems.forEach(item => confirmDelete(item));
@@ -346,7 +460,7 @@ export default function Sessions() {
       ) : (
         <FlatList
           data={humidor
-            .filter(h => h.title.toLowerCase().includes(searchQuery.toLowerCase()))
+            .filter(h => (h.title?.toLowerCase?.() || '').includes(searchQuery.toLowerCase()))
             .sort((a, b) => {
               if (sortOption === 'Date') {
                 const dateA = a.createdAt?.toDate?.() || new Date(0);
@@ -393,7 +507,7 @@ export default function Sessions() {
         onRequestClose={() => setModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: theme.accent }]}>
+          <View style={[styles.modalContent, { backgroundColor: theme.background }]}>
             <Text style={[styles.modalTitle, { color: theme.text }]}>Enter Humidor Name</Text>
             <TextInput
               style={[styles.modalInput, { borderColor: theme.border, color: theme.text }]}
@@ -403,8 +517,8 @@ export default function Sessions() {
               onChangeText={setHumidorName}
             />
             <View style={styles.modalButtons}>
-              <TouchableOpacity onPress={() => setModalVisible(false)} style={[styles.modalButton, { backgroundColor: '#ccc' }]}>
-                <Text style={{ fontSize: 16 }}>Cancel</Text>
+              <TouchableOpacity onPress={() => setModalVisible(false)} style={[styles.modalButton, { backgroundColor: theme.background, borderWidth: 1, borderColor: theme.text }]}>
+                <Text style={{ fontSize: 16, color: theme.text }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={async () => {
@@ -442,7 +556,7 @@ export default function Sessions() {
         onRequestClose={() => setRenameModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: theme.accent }]}>
+          <View style={[styles.modalContent, { backgroundColor: theme.background }]}>
             <Text style={[styles.modalTitle, { color: theme.text }]}>Rename Humidor</Text>
             <TextInput
               style={[styles.modalInput, { borderColor: theme.border, color: theme.text }]}
@@ -453,8 +567,8 @@ export default function Sessions() {
               autoFocus
             />
             <View style={styles.modalButtons}>
-              <TouchableOpacity onPress={() => setRenameModalVisible(false)} style={[styles.modalButton, { backgroundColor: '#ccc' }]}>
-                <Text style={{ fontSize: 16 }}>Cancel</Text>
+              <TouchableOpacity onPress={() => setRenameModalVisible(false)} style={[styles.modalButton, { backgroundColor: theme.background, borderWidth: 1, borderColor: theme.text }]}>
+                <Text style={{ fontSize: 16, color: theme.text }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleRename}

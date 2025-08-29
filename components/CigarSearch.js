@@ -6,8 +6,12 @@ import { useNavigation } from '@react-navigation/native';
 import { Ionicons, MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
+import { useTheme } from '../context/ThemeContext';
 
 export default function Search() {
+  const { theme } = useTheme();
+  const isDark = theme.isDark;
+
   const [searchQuery, setSearchQuery] = useState('');
   const [allCigars, setAllCigars] = useState([]);
   const [recentSearches, setRecentSearches] = useState([]);
@@ -18,30 +22,45 @@ export default function Search() {
 
   const topSearches = ['Arturo Fuente', 'Padron', 'Montecristo', 'Oliva', 'Rocky Patel'];
 
-  useEffect(() => {
-    const fetchFilteredCigars = async () => {
-      if (searchQuery.trim().length === 0) {
-        setAllCigars([]);
-        return;
-      }
+useEffect(() => {
+  let isCancelled = false;
+  const term = searchQuery.trim().toLowerCase();
 
-      setLoading(true);
+  // If empty, reset list and loading immediately
+  if (term.length === 0) {
+    setAllCigars([]);
+    setLoading(false);
+    return;
+  }
+
+  // Debounce to avoid firing on every keystroke
+  const handle = setTimeout(async () => {
+    setLoading(true);
+    try {
       const cigarsCol = collection(db, 'cigars');
-      const q = query(
+      const qRef = query(
         cigarsCol,
         orderBy('name_insensitive'),
-        startAt(searchQuery.toLowerCase()),
-        endAt(searchQuery.toLowerCase() + '\uf8ff')
+        startAt(term),
+        endAt(term + '\uf8ff')
       );
 
-      const cigarsSnapshot = await getDocs(q);
-      const cigarsList = cigarsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const cigarsSnapshot = await getDocs(qRef);
+      if (isCancelled) return;
+      const cigarsList = cigarsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       setAllCigars(cigarsList);
-      setLoading(false);
-    };
+    } catch (err) {
+      console.error('Cigar search failed:', err);
+    } finally {
+      if (!isCancelled) setLoading(false);
+    }
+  }, 300);
 
-    fetchFilteredCigars();
-  }, [searchQuery]);
+  return () => {
+    isCancelled = true;
+    clearTimeout(handle);
+  };
+}, [searchQuery]);
 
   useEffect(() => {
     const loadRecent = async () => {
@@ -53,9 +72,10 @@ export default function Search() {
     loadRecent();
   }, []);
 
-  useEffect(() => {
-    const checkSearchLimit = async () => {
-      const userId = 'WrwfP03AmIZss7hMwFWyX4J16my1'; // You can replace this with dynamic user ID logic if needed
+useEffect(() => {
+  const checkSearchLimit = async () => {
+    try {
+      const userId = 'WrwfP03AmIZss7hMwFWyX4J16my1';
       const userRef = doc(db, 'users', userId);
       const userSnap = await getDoc(userRef);
 
@@ -67,36 +87,36 @@ export default function Search() {
           const now = new Date();
           const lastReset = userData.searchReset?.toDate?.() || now;
           const count = userData.searchCount || 0;
-          const diff = (now - lastReset) / (1000 * 60 * 60); // in hours
+          const diff = (now - lastReset) / (1000 * 60 * 60); // hours
 
           if (diff >= 24) {
-            await updateDoc(userRef, {
-              searchCount: 0,
-              searchReset: new Date(),
-            });
+            await updateDoc(userRef, { searchCount: 0, searchReset: new Date() });
           } else if (count >= 15) {
             alert("You've reached your daily search limit. Please come back tomorrow or upgrade for unlimited searches.");
             setSearchQuery('');
-            return;
           }
         }
       }
-    };
+    } catch (e) {
+      console.error('Search limit check failed:', e);
+    }
+  };
 
-    checkSearchLimit();
-  }, [searchQuery]);
+  checkSearchLimit();
+}, [searchQuery]);
 
   const handleSelectCigar = async (cigar) => {
     let fullCigar = cigar;
 
-    // If only the name is passed, fetch full cigar data
-    if (!cigar.image_url || !cigar.brand) {
+    // If only the name is passed, fetch full cigar data (and include the doc id)
+    if (!cigar.image_url || !cigar.brand || !cigar.id) {
       const cigarsCol = collection(db, 'cigars');
       const q = query(cigarsCol, where('name_insensitive', '==', cigar.name.toLowerCase()));
       const cigarsSnapshot = await getDocs(q);
       if (cigarsSnapshot.empty) return;
-      const match = cigarsSnapshot.docs[0].data();
-      fullCigar = match;
+      const docSnap = cigarsSnapshot.docs[0];
+      const match = docSnap.data();
+      fullCigar = { id: docSnap.id, ...match };
     }
 
     const updated = [fullCigar.name, ...recentSearches.filter(t => t !== fullCigar.name)].slice(0, 5);
@@ -119,44 +139,46 @@ export default function Search() {
   };
 
   const renderCigar = ({ item }) => (
-    <TouchableOpacity style={styles.item} onPress={() => handleSelectCigar(item)}>
+    <TouchableOpacity style={[styles.item, { backgroundColor: theme.card }]} onPress={() => handleSelectCigar(item)}>
       <Image source={{ uri: item.image_url }} style={styles.image} />
       <View style={styles.textContainer}>
-        <Text style={styles.title}>{item.name}</Text>
-        <Text style={styles.subtitle}>{item.brand}</Text>
+        <Text style={[styles.title, { color: theme.text }]}>{item.name}</Text>
+        <Text style={[styles.subtitle, { color: theme.placeholder }]}>{item.brand}</Text>
       </View>
     </TouchableOpacity>
   );
 
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: theme.background }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={30} color="#3e3024" />
+          <Ionicons name="arrow-back" size={30} color={theme.text} />
         </TouchableOpacity>
-        <View style={styles.searchInputWrapper}>
-          <Ionicons name="search" size={20} color="#7a6e63" style={styles.searchIcon} />
+        <View style={[styles.searchInputWrapper, { backgroundColor: theme.inputBackground, borderColor: theme.primary }]}>
+          <Ionicons name="search" size={20} color={theme.searchPlaceholder} style={styles.searchIcon} />
           <TextInput
-            style={styles.input}
+            style={[styles.input, { color: theme.searchText }]}
             placeholder="Search for a cigar..."
+            placeholderTextColor={theme.searchPlaceholder}
+            selectionColor={theme.primary}
             onChangeText={setSearchQuery}
             value={searchQuery}
             onSubmitEditing={() => Keyboard.dismiss()}
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearIcon}>
-              <Ionicons name="close-circle" size={20} color="#B71C1C" />
+              <Ionicons name="close-circle" size={20} color="red" />
             </TouchableOpacity>
           )}
         </View>
 
         {searchQuery.trim().length === 0 && allCigars.length === 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Top Searches</Text>
+            <Text style={[styles.sectionTitle, { color: theme.text }]}>Top Searches</Text>
             {topSearches.map((brand, idx) => (
               <View style={styles.searchRow} key={idx}>
-                <MaterialCommunityIcons name="fire" size={24} color="#e25822" style={{ marginRight: 8 }} />
-                <Text style={[styles.subtitle, { fontSize: 16 }]}>{brand}</Text>
+                <MaterialCommunityIcons name="fire" size={24} color={isDark ? theme.primary : '#FF8C00'} style={{ marginRight: 8 }} />
+                <Text style={[styles.subtitle, { fontSize: 16, color: theme.placeholder }]}>{brand}</Text>
               </View>
             ))}
           </View>
@@ -165,14 +187,14 @@ export default function Search() {
         {searchQuery.trim().length === 0 && allCigars.length === 0 && recentSearches.length > 0 && (
           <View style={styles.section}>
             <View style={styles.recentHeader}>
-              <Text style={styles.sectionTitle}>Recent</Text>
+              <Text style={[styles.sectionTitle, { color: theme.text }]}>Recent</Text>
               <TouchableOpacity
                 onPress={async () => {
                   await AsyncStorage.removeItem('recentSearches');
                   setRecentSearches([]);
                 }}
               >
-                <Text style={styles.clearText}>CLEAR</Text>
+                <Text style={[styles.clearText, { color: isDark ? theme.text : 'red' }]}>CLEAR</Text>
               </TouchableOpacity>
             </View>
             {recentSearches.map((term, idx) => (
@@ -181,29 +203,29 @@ export default function Search() {
                 style={styles.searchRow}
                 onPress={() => handleSelectCigar({ name: term })}
               >
-                <FontAwesome name="history" size={22} color="#7a6e63" style={{ marginRight: 8 }} />
-                <Text style={[styles.subtitle, { fontSize: 16 }]}>{term}</Text>
+                <FontAwesome name="history" size={22} color={isDark ? '#fff' : theme.searchPlaceholder} style={{ marginRight: 8 }} />
+                <Text style={[styles.subtitle, { fontSize: 16, color: theme.placeholder }]}>{term}</Text>
               </TouchableOpacity>
             ))}
           </View>
         )}
 
-        {loading && (
+        {loading ? (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 20 }}>
-            <ActivityIndicator size="large" color="#7a6e63" />
+            <ActivityIndicator size="large" color={theme.text} />
           </View>
+        ) : (
+          <FlatList
+            data={allCigars}
+            keyExtractor={(item) => item.id}
+            renderItem={renderCigar}
+            initialNumToRender={10}
+            maxToRenderPerBatch={10}
+            windowSize={5}
+            keyboardShouldPersistTaps="handled"
+            onScrollBeginDrag={() => Keyboard.dismiss()}
+          />
         )}
-
-        <FlatList
-          data={allCigars}
-          keyExtractor={(item) => item.id}
-          renderItem={renderCigar}
-          initialNumToRender={10}
-          maxToRenderPerBatch={10}
-          windowSize={5}
-          keyboardShouldPersistTaps="handled"
-          onScrollBeginDrag={() => Keyboard.dismiss()}
-        />
       </View>
     </TouchableWithoutFeedback>
   );

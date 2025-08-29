@@ -20,7 +20,7 @@ export default function BottomTabs() {
   const user = route.params?.user;
   const { theme } = useTheme();
   return (
-    <Tab.Navigator
+    <Tab.Navigator id="rootTabs"
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: false,

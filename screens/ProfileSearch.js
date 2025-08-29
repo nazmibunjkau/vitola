@@ -1,23 +1,102 @@
-import { StyleSheet, Text, SafeAreaView, View, TouchableOpacity, TextInput, FlatList, Image, Keyboard } from 'react-native';
-import React, { useState, useEffect } from 'react';
+import { StyleSheet, Text, SafeAreaView, View, TouchableOpacity, TextInput, FlatList, Image, Keyboard, Modal, TouchableWithoutFeedback } from 'react-native';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import { MaterialIcons } from '@expo/vector-icons';
 import { ArrowLeftIcon } from "react-native-heroicons/solid"
 import { useTheme } from '../context/ThemeContext'; 
 import { getAuth } from 'firebase/auth';
-import { doc, getDocs, collection, getDoc, updateDoc, arrayUnion, addDoc, arrayRemove, setDoc, deleteDoc, collectionGroup } from 'firebase/firestore';
+import { doc, getDocs, collection, getDoc, updateDoc, arrayUnion, arrayRemove, setDoc, deleteDoc, collectionGroup, onSnapshot } from 'firebase/firestore';
 import { db } from '../config/firebase'; 
 
 export default function ProfileSearch({ navigation }) {
   const { theme } = useTheme();
   const [activeTab, setActiveTab] = useState('Profiles');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [profileQuery, setProfileQuery] = useState('');
+  const [clubQuery, setClubQuery] = useState('');
   const [userSubscription, setUserSubscription] = useState('free');
   const [profiles, setProfiles] = useState([]);
+  const [allProfiles, setAllProfiles] = useState([]);
   const [filteredProfiles, setFilteredProfiles] = useState([]);
   const [followedUserIds, setFollowedUserIds] = useState([]);
   const [clubs, setClubs] = useState([]);
+  const [allClubs, setAllClubs] = useState([]);
   const [filteredClubs, setFilteredClubs] = useState([]);
   const [joinedClubIds, setJoinedClubIds] = useState([]);
+  const [followBusy, setFollowBusy] = useState({}); // { [userId]: boolean }
+  const [unsubscribeFollowing, setUnsubscribeFollowing] = useState(null);
+  // Club filters
+  const [selectedLocation, setSelectedLocation] = useState(null); // string | null
+  const [selectedType, setSelectedType] = useState(null); // string | null
+  const [showLocationModal, setShowLocationModal] = useState(false);
+  const [showTypeModal, setShowTypeModal] = useState(false);
+  const [locationQuery, setLocationQuery] = useState('');
+
+  const [typeQuery, setTypeQuery] = useState('');
+  // Base clubs list considering current query and location (but not type)
+  const baseClubsForTypes = useMemo(() => {
+    if (activeTab !== 'Clubs') return [];
+    // When there is a search query or location filter, base the type list on the full set
+    const source = (clubQuery?.trim() || selectedLocation) ? allClubs : clubs;
+    let list = source;
+    const q = (clubQuery || '').trim().toLowerCase();
+    if (q) {
+      list = list.filter(c => (c.name || '').toLowerCase().includes(q));
+    }
+    if (selectedLocation) {
+      list = list.filter(c => (c.location || '') === selectedLocation);
+    }
+    return list;
+  }, [activeTab, clubs, allClubs, clubQuery, selectedLocation]);
+
+  // Unique club types present in the current list
+  const availableTypes = useMemo(() => {
+    const set = new Set();
+    baseClubsForTypes.forEach(c => {
+      const t = c.type;
+      if (Array.isArray(t)) {
+        t.forEach(x => x && set.add(String(x)));
+      } else if (t) {
+        set.add(String(t));
+      }
+    });
+    return Array.from(set).sort((a,b) => a.localeCompare(b));
+  }, [baseClubsForTypes]);
+
+  // Type options filtered by the type query
+  const filteredTypes = useMemo(() => {
+    if (!typeQuery.trim()) return availableTypes;
+    const q = typeQuery.toLowerCase();
+    return availableTypes.filter(t => t.toLowerCase().includes(q));
+  }, [availableTypes, typeQuery]);
+
+  const uniqueLocations = useMemo(() => {
+    const set = new Set((clubs || []).map(c => (c.location || '').trim()).filter(Boolean));
+    return Array.from(set).sort((a,b) => a.localeCompare(b));
+  }, [clubs]);
+
+  const filteredLocations = useMemo(() => {
+    if (!locationQuery.trim()) return uniqueLocations;
+    const q = locationQuery.toLowerCase();
+    return uniqueLocations.filter(loc => loc.toLowerCase().includes(q));
+  }, [uniqueLocations, locationQuery]);
+  useEffect(() => {
+    const auth = getAuth();
+    const currentUser = auth.currentUser;
+    if (!currentUser) return;
+
+    const unsub = onSnapshot(
+      collection(db, 'users', currentUser.uid, 'following'),
+      (snap) => {
+        const ids = snap.docs.map(d => d.id);
+        setFollowedUserIds(ids);
+        // If you want newly-followed profiles to disappear immediately from the list:
+        setProfiles(prev => prev.filter(u => !ids.includes(u.id)));
+      }
+    );
+
+    setUnsubscribeFollowing(() => unsub);
+    return () => unsub();
+  }, []);
 
   const fetchUsers = async () => {
     const auth = getAuth();
@@ -26,16 +105,20 @@ export default function ProfileSearch({ navigation }) {
 
     try {
       const snapshot = await getDocs(collection(db, 'users'));
-      let users = snapshot.docs
-          .map(doc => ({ id: doc.id, ...doc.data() }))
-          .filter(user => user.id !== currentUser.uid);
+      const everyoneElse = snapshot.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(u => u.id !== currentUser.uid);
 
-      // Exclude already followed users
-      const unfollowedUsers = users.filter(user => !followedUserIds.includes(user.id));
-      // Shuffle and limit to 100
-      users = unfollowedUsers.sort(() => 0.5 - Math.random()).slice(0, 100);
+      // Store the full list for search (includes followed folks)
+      setAllProfiles(everyoneElse);
 
-      setProfiles(users);
+      // Suggestions list excludes already-followed users
+      const suggestions = everyoneElse
+        .filter(u => !followedUserIds.includes(u.id))
+        .sort(() => 0.5 - Math.random())
+        .slice(0, 100);
+
+      setProfiles(suggestions);
     } catch (err) {
       console.error('Error fetching users:', err);
     }
@@ -44,17 +127,23 @@ export default function ProfileSearch({ navigation }) {
   const fetchClubs = async () => {
     try {
       const snapshot = await getDocs(collection(db, 'clubs'));
-      let allClubs = await Promise.all(snapshot.docs.map(async doc => {
-        const memberSnap = await getDocs(collection(db, 'clubs', doc.id, 'members'));
-        return {
-          id: doc.id,
-          ...doc.data(),
-          memberCount: memberSnap.size
-        };
-      }));
-      const unjoinedClubs = allClubs.filter(club => !joinedClubIds.includes(club.id));
-      const shuffled = unjoinedClubs.sort(() => 0.5 - Math.random()).slice(0, 100);
-      setClubs(shuffled);
+      const withCounts = await Promise.all(
+        snapshot.docs.map(async d => {
+          const memberSnap = await getDocs(collection(db, 'clubs', d.id, 'members'));
+          return { id: d.id, ...d.data(), memberCount: memberSnap.size };
+        })
+      );
+
+      // Store the full list for search (includes already-joined clubs)
+      setAllClubs(withCounts);
+
+      // Suggestions list excludes clubs the user already joined
+      const suggestions = withCounts
+        .filter(c => !joinedClubIds.includes(c.id))
+        .sort(() => 0.5 - Math.random())
+        .slice(0, 100);
+
+      setClubs(suggestions);
     } catch (err) {
       console.error('Error fetching clubs:', err);
     }
@@ -67,11 +156,9 @@ export default function ProfileSearch({ navigation }) {
     if (!currentUser) return;
 
     try {
-      const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-      if (userDoc.exists()) {
-        const following = userDoc.data().following || [];
-        setFollowedUserIds(following);
-      }
+      const snap = await getDocs(collection(db, 'users', currentUser.uid, 'following'));
+      const ids = snap.docs.map(d => d.id);
+      setFollowedUserIds(ids);
     } catch (err) {
       console.error('Error fetching followed users:', err);
     }
@@ -130,30 +217,48 @@ export default function ProfileSearch({ navigation }) {
   // Profiles search effect
   useEffect(() => {
     if (activeTab === 'Profiles') {
-      if (!searchQuery.trim()) {
+      if (!profileQuery.trim()) {
+        // No query -> show suggestions (unfollowed only)
         setFilteredProfiles(profiles);
       } else {
-        const filtered = profiles.filter(user =>
-          user.name?.toLowerCase().includes(searchQuery.toLowerCase())
-        );
+        // Query -> search across *all* profiles (including already followed)
+        const q = profileQuery.toLowerCase();
+        const filtered = allProfiles.filter(user => (user.name || '').toLowerCase().includes(q));
         setFilteredProfiles(filtered);
       }
     }
-  }, [searchQuery, profiles, activeTab]);
+  }, [profileQuery, profiles, allProfiles, activeTab]);
 
-  // Clubs search effect
+  // Clubs search + filters effect
   useEffect(() => {
-    if (activeTab === 'Clubs') {
-      if (!searchQuery.trim()) {
-        setFilteredClubs(clubs);
-      } else {
-        const filtered = clubs.filter(club =>
-          club.name?.toLowerCase().includes(searchQuery.toLowerCase())
-        );
-        setFilteredClubs(filtered);
-      }
-    }
-  }, [searchQuery, clubs, activeTab]);
+    if (activeTab !== 'Clubs') return;
+
+    const source = (clubQuery?.trim() || selectedLocation || selectedType) ? allClubs : clubs;
+
+    const byQuery = (list) => {
+      if (!clubQuery.trim()) return list;
+      const q = clubQuery.toLowerCase();
+      return list.filter(club => club.name?.toLowerCase().includes(q));
+    };
+
+    const byLocation = (list) => {
+      if (!selectedLocation) return list;
+      return list.filter(club => (club.location || '') === selectedLocation);
+    };
+
+    const byType = (list) => {
+      if (!selectedType) return list;
+      const t = (club) => club.type;
+      return list.filter(club => {
+        const val = t(club);
+        if (Array.isArray(val)) return val.includes(selectedType);
+        return (val || '') === selectedType;
+      });
+    };
+
+    const next = byQuery(byType(byLocation(source)));
+    setFilteredClubs(next);
+  }, [activeTab, clubQuery, clubs, allClubs, selectedLocation, selectedType]);
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
@@ -179,18 +284,18 @@ export default function ProfileSearch({ navigation }) {
         ))}
       </View>
 
-      <View style={styles.searchInputWrapper}>
-        <Ionicons name="search" size={20} color="#7a6e63" style={styles.searchIcon} />
+      <View style={[styles.searchInputWrapper, { backgroundColor: theme.inputBackground }]}>
+        <Ionicons name="search" size={20} color={theme.searchPlaceholder} style={styles.searchIcon} />
         <TextInput
-          style={[styles.input, { color: theme.text }]}
+          style={[styles.input, { color: theme.searchText || theme.text }]}
           placeholder={activeTab === 'Profiles' ? 'Search for a profile...' : 'Search for a club...'}
-          placeholderTextColor={theme.placeholder}
-          onChangeText={setSearchQuery}
-          value={searchQuery}
+          placeholderTextColor={theme.searchPlaceholder}
+          onChangeText={activeTab === 'Profiles' ? setProfileQuery : setClubQuery}
+          value={activeTab === 'Profiles' ? profileQuery : clubQuery}
           onSubmitEditing={() => Keyboard.dismiss()}
         />
-        {searchQuery.length > 0 && (
-          <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearIcon}>
+        {(activeTab === 'Profiles' ? profileQuery : clubQuery).length > 0 && (
+          <TouchableOpacity onPress={() => (activeTab === 'Profiles' ? setProfileQuery : setClubQuery)('')} style={styles.clearIcon}>
             <Ionicons name="close-circle" size={20} color="#B71C1C" />
           </TouchableOpacity>
         )}
@@ -198,42 +303,179 @@ export default function ProfileSearch({ navigation }) {
       {activeTab === 'Clubs' && (
         <>
           <View style={{ flexDirection: 'row', justifyContent: 'flex-start', marginTop: 10, marginHorizontal: 16 }}>
-            <TouchableOpacity
+            {/* Location Filter */}
+            <View
               style={{
-                width: 120,
+                width: 160,
                 marginRight: 10,
-                paddingVertical: 6,
                 borderRadius: 8,
                 borderWidth: 1,
                 borderColor: theme.primary,
                 alignItems: 'center',
-                justifyContent: 'center'
+                justifyContent: 'center',
+                position: 'relative'
               }}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Ionicons name="location-outline" size={18} color={theme.primary} style={{ marginRight: 6 }} />
-                <Text style={{ color: theme.primary, fontWeight: '500', fontSize: 14 }}>Location</Text>
-              </View>
-            </TouchableOpacity>
-            <TouchableOpacity
+              <TouchableOpacity
+                onPress={() => setShowLocationModal(true)}
+                style={{ paddingVertical: 6, width: '100%', alignItems: 'center', justifyContent: 'center' }}
+                activeOpacity={0.8}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="location-outline" size={18} color={theme.primary} style={{ marginRight: 6 }} />
+                  <Text style={{ color: theme.primary, fontWeight: '500', fontSize: 14 }}>
+                    {selectedLocation ? selectedLocation : 'Location'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            {/* Club Type Filter */}
+            <View
               style={{
-                width: 120,
+                width: 160,
                 marginLeft: 10,
-                paddingVertical: 6,
                 borderRadius: 8,
                 borderWidth: 1,
                 borderColor: theme.primary,
-                alignItems: 'center'
+                alignItems: 'center',
+                justifyContent: 'center',
+                position: 'relative'
               }}
             >
-              <Text style={{ color: theme.primary, fontWeight: '500', fontSize: 14 }}>Club Type</Text>
-            </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setShowTypeModal(true)}
+                style={{ paddingVertical: 6, width: '100%', alignItems: 'center', justifyContent: 'center' }}
+                activeOpacity={0.8}
+              >
+                <Text style={{ color: theme.primary, fontWeight: '500', fontSize: 14 }}>
+                  {selectedType ? selectedType : 'Club Type'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {(selectedLocation || selectedType) && (
+              <TouchableOpacity
+                onPress={() => { setSelectedLocation(null); setSelectedType(null); setTypeQuery(''); setLocationQuery(''); }}
+                style={{ marginLeft: 8, paddingHorizontal: 6, justifyContent: 'center', alignItems: 'center' }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityRole="button"
+                accessibilityLabel="Clear filters"
+              >
+                <Ionicons name="close-circle" size={22} color="#d32f2f" />
+              </TouchableOpacity>
+            )}
           </View>
           <View style={{ height: 0.47, backgroundColor: theme.primary, marginTop: 12, alignSelf: 'stretch' }} />
+          {/* Location Picker Modal */}
+          <Modal visible={showLocationModal} transparent animationType="slide" onRequestClose={() => setShowLocationModal(false)}>
+            <TouchableWithoutFeedback onPress={() => setShowLocationModal(false)}>
+              <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+                {/* Stop propagation inside sheet */}
+                <TouchableWithoutFeedback onPress={() => {}}>
+                  <View style={{ backgroundColor: theme.background, maxHeight: '60%', borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}>
+                    <View style={{ alignItems: 'center', paddingVertical: 6 }}>
+                      <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: theme.border }} />
+                    </View>
+                    <Text style={{ color: theme.text, fontSize: 16, fontWeight: '600', marginBottom: 10 }}>Choose Location</Text>
+
+                    {/* Search bar */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: theme.border, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 10 }}>
+                      <Ionicons name="search" size={18} color={theme.text} style={{ marginRight: 6 }} />
+                      <TextInput
+                        value={locationQuery}
+                        onChangeText={setLocationQuery}
+                        placeholder="Search location..."
+                        placeholderTextColor={theme.placeholder}
+                        style={{ flex: 1, color: theme.text, fontSize: 15 }}
+                        returnKeyType="search"
+                      />
+                      {locationQuery.length > 0 && (
+                        <TouchableOpacity onPress={() => setLocationQuery('')}>
+                          <Ionicons name="close-circle" size={18} color={theme.text} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    <FlatList
+                      data={[...(selectedLocation ? ['Clear location'] : []), ...filteredLocations]}
+                      keyExtractor={(item, idx) => item + idx}
+                      keyboardShouldPersistTaps="handled"
+                      renderItem={({ item }) => (
+                        <TouchableOpacity
+                          onPress={() => {
+                            if (item === 'Clear location') setSelectedLocation(null); else setSelectedLocation(item);
+                            setShowLocationModal(false);
+                            setLocationQuery('');
+                          }}
+                          style={{ paddingVertical: 12 }}
+                        >
+                          <Text style={{ color: item === 'Clear location' ? '#d32f2f' : theme.text, fontSize: 16 }}>{item}</Text>
+                        </TouchableOpacity>
+                      )}
+                    />
+                  </View>
+                </TouchableWithoutFeedback>
+              </View>
+            </TouchableWithoutFeedback>
+          </Modal>
+
+          {/* Club Type Picker Modal */}
+          <Modal visible={showTypeModal} transparent animationType="slide" onRequestClose={() => setShowTypeModal(false)}>
+            <TouchableWithoutFeedback onPress={() => setShowTypeModal(false)}>
+              <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+                <TouchableWithoutFeedback onPress={() => {}}>
+                  <View style={{ backgroundColor: theme.background, maxHeight: '60%', borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}>
+                    <View style={{ alignItems: 'center', paddingVertical: 6 }}>
+                      <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: theme.border }} />
+                    </View>
+                    <Text style={{ color: theme.text, fontSize: 16, fontWeight: '600', marginBottom: 10 }}>Choose Club Type</Text>
+
+                    {/* Search bar for types */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: theme.border, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 10 }}>
+                      <Ionicons name="search" size={18} color={theme.text} style={{ marginRight: 6 }} />
+                      <TextInput
+                        value={typeQuery}
+                        onChangeText={setTypeQuery}
+                        placeholder="Search club type..."
+                        placeholderTextColor={theme.placeholder}
+                        style={{ flex: 1, color: theme.text, fontSize: 15 }}
+                        returnKeyType="search"
+                      />
+                      {typeQuery.length > 0 && (
+                        <TouchableOpacity onPress={() => setTypeQuery('')}>
+                          <Ionicons name="close-circle" size={18} color={theme.text} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    <FlatList
+                      data={[...(selectedType ? ['Clear type'] : []), ...filteredTypes]}
+                      keyExtractor={(item, idx) => item + idx}
+                      ListEmptyComponent={() => (
+                        <Text style={{ color: theme.placeholder, textAlign: 'center', paddingVertical: 16 }}>No types found</Text>
+                      )}
+                      renderItem={({ item }) => (
+                        <TouchableOpacity
+                          onPress={() => {
+                            if (item === 'Clear type') setSelectedType(null); else setSelectedType(item);
+                            setShowTypeModal(false);
+                            setTypeQuery('');
+                          }}
+                          style={{ paddingVertical: 12 }}
+                        >
+                          <Text style={{ color: item === 'Clear type' ? '#d32f2f' : theme.text, fontSize: 16 }}>{item}</Text>
+                        </TouchableOpacity>
+                      )}
+                    />
+                  </View>
+                </TouchableWithoutFeedback>
+              </View>
+            </TouchableWithoutFeedback>
+          </Modal>
         </>
       )}
 
-      {searchQuery.length > 0 && filteredProfiles.length === 0 && (
+      {activeTab === 'Profiles' && profileQuery.length > 0 && filteredProfiles.length === 0 && (
         <Text style={{
           textAlign: 'center',
           marginTop: 16,
@@ -254,66 +496,113 @@ export default function ProfileSearch({ navigation }) {
           renderItem={({ item }) => {
             const isFollowed = followedUserIds.includes(item.id);
             return (
-              <View style={[styles.profileRow, { borderColor: theme.border }]}>
+              <TouchableOpacity
+                style={[styles.profileRow, { borderColor: theme.border }]}
+                activeOpacity={0.8}
+                onPress={() => navigation.navigate('Profile', { userId: item.id, fromOutside: true })}
+              >
                 <Image source={{ uri: item.photoURL || 'https://placehold.co/50x50' }} style={styles.profilePic} />
-                <Text style={[styles.profileName, { color: theme.text }]}>{item.name || 'Unnamed User'}</Text>
+                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                    <Text
+                      style={[styles.profileName, { color: theme.text }]}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {item.name ?? 'Unnamed User'}
+                    </Text>
+                    {item?.subscriptionPlan === 'paid' && (
+                      <MaterialIcons
+                        name="verified"
+                        size={16}
+                        color={theme.primary}
+                        style={{ marginLeft: 6 }}
+                        accessibilityLabel="Verified account"
+                      />
+                    )}
+                  </View>
+                  {/* The Follow/Unfollow button remains as-is below */}
+                </View>
                 <TouchableOpacity
                   onPress={async () => {
-                    const auth = getAuth();
-                    const currentUser = auth.currentUser;
-                    if (!currentUser) return;
+                  const auth = getAuth();
+                  const currentUser = auth.currentUser;
+                  if (!currentUser) return;
 
-                    const currentUserId = currentUser.uid;
-                    const targetUserId = item.id;
+                  const currentUserId = currentUser.uid;
+                  const targetUserId = item.id;
 
-                    try {
-                      const currentUserRef = doc(db, 'users', currentUserId);
-                      const targetUserRef = doc(db, 'users', targetUserId);
+                  if (followBusy[targetUserId]) return; // prevent double taps
+                  setFollowBusy(b => ({ ...b, [targetUserId]: true }));
 
-                      if (isFollowed) {
-                        await updateDoc(currentUserRef, {
-                          following: arrayRemove(targetUserId)
-                        });
-                        await updateDoc(targetUserRef, {
-                          followers: arrayRemove(currentUserId)
-                        });
-                        setFollowedUserIds(prev => prev.filter(id => id !== targetUserId));
-                      } else {
-                        await updateDoc(currentUserRef, {
-                          following: arrayUnion(targetUserId)
-                        });
-                        await updateDoc(targetUserRef, {
-                          followers: arrayUnion(currentUserId)
-                        });
+                  const isCurrentlyFollowed = followedUserIds.includes(targetUserId);
 
-                        const notificationRef = doc(db, 'users', targetUserId, 'notifications', `${currentUserId}`);
-                        await setDoc(notificationRef, {
-                          type: 'follow',
-                          fromUserId: currentUserId,
-                          timestamp: new Date(),
-                          read: false
-                        });
+                  // Optimistic UI: update local state immediately
+                  setFollowedUserIds(prev => (
+                    isCurrentlyFollowed ? prev.filter(id => id !== targetUserId) : [...prev, targetUserId]
+                  ));
+                  if (!isCurrentlyFollowed) {
+                    // Hide from list right away if you prefer to remove followed users
+                    setProfiles(prev => prev.filter(u => u.id !== targetUserId));
+                  }
 
-                        setFollowedUserIds(prev => [...prev, targetUserId]);
-                      }
-                    } catch (error) {
-                      console.error('Error updating follow status:', error);
+                  // Subcollection refs
+                  const myFollowingRef = doc(db, 'users', currentUserId, 'following', targetUserId);
+                  const theirFollowersRef = doc(db, 'users', targetUserId, 'followers', currentUserId);
+
+                  try {
+                    if (isCurrentlyFollowed) {
+                      // UNFOLLOW: delete both sides
+                      await deleteDoc(myFollowingRef);
+                      await deleteDoc(theirFollowersRef);
+                    } else {
+                      // FOLLOW: create both sides
+                      const payload = { since: new Date() };
+                      await setDoc(myFollowingRef, payload);
+                      await setDoc(theirFollowersRef, payload);
                     }
+                  } catch (e) {
+                    console.error('Error toggling follow subcollection:', e);
+                    // revert optimistic change on hard failure
+                    setFollowedUserIds(prev => (
+                      isCurrentlyFollowed ? [...prev, targetUserId] : prev.filter(id => id !== targetUserId)
+                    ));
+                    setFollowBusy(b => ({ ...b, [targetUserId]: false }));
+                    return;
+                  }
+
+                  // Optional: create a notification on follow (same as before)
+                  if (!isCurrentlyFollowed) {
+                    try {
+                      const notificationRef = doc(db, 'users', targetUserId, 'notifications', `follow_${currentUserId}`);
+                      await setDoc(notificationRef, {
+                        type: 'follow',
+                        fromUserId: currentUserId,
+                        timestamp: new Date(),
+                        read: false,
+                      }, { merge: false });
+                    } catch (e) {
+                      console.warn('Failed to create follow notification:', e);
+                    }
+                  }
+
+                  setFollowBusy(b => ({ ...b, [targetUserId]: false }));
                   }}
+                  disabled={!!followBusy[item.id]}
                   style={[
                     styles.followButton,
                     {
                       borderWidth: 1,
                       borderColor: isFollowed ? theme.primary : theme.primary,
-                      backgroundColor: isFollowed ? theme.primary : theme.background
+                      backgroundColor: isFollowed ? theme.primary : theme.primary
                     }
                   ]}
                 >
-                  <Text style={{ color: isFollowed ? '#fff' : theme.primary }}>
+                  <Text style={{ color: isFollowed ? theme.background : theme.background }}>
                     {isFollowed ? 'Unfollow' : 'Follow'}
                   </Text>
                 </TouchableOpacity>
-              </View>
+              </TouchableOpacity>
             );
           }}
         />
@@ -323,13 +612,17 @@ export default function ProfileSearch({ navigation }) {
     {activeTab === 'Clubs' && (
       <>
         <FlatList
-          data={searchQuery.length > 0 ? filteredClubs : clubs}
+          data={((clubQuery.length > 0) || selectedLocation || selectedType) ? filteredClubs : clubs}
           keyExtractor={item => item.id}
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 0, paddingBottom: 500 }}
           renderItem={({ item }) => {
             const isJoined = joinedClubIds.includes(item.id);
             return (
-              <View style={[styles.profileRow, { borderColor: theme.border }]}>
+              <TouchableOpacity
+                style={[styles.profileRow, { borderColor: theme.border }]}
+                activeOpacity={0.8}
+                onPress={() => navigation.navigate('ClubDetails', { club: item })}
+              >
                 <Image source={{ uri: item.image || 'https://placehold.co/50x50' }} style={styles.profilePic} />
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.profileName, { color: theme.text }]}>{item.name || 'Unnamed Club'}</Text>
@@ -372,11 +665,11 @@ export default function ProfileSearch({ navigation }) {
                     }
                   ]}
                 >
-                  <Text style={{ color: isJoined ? '#fff' : theme.primary }}>
+                  <Text style={{ color: isJoined ? theme.background : theme.primary }}>
                     {isJoined ? 'Leave' : 'Join'}
                   </Text>
                 </TouchableOpacity>
-              </View>
+              </TouchableOpacity>
             );
           }}
         />
@@ -420,7 +713,7 @@ const styles = StyleSheet.create({
   searchInputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
+    // backgroundColor is now set dynamically via theme
     marginHorizontal: 16,
     marginTop: 12,
     borderRadius: 8,
@@ -473,8 +766,9 @@ const styles = StyleSheet.create({
     marginRight: 12
   },
   profileName: {
-    flex: 1,
-    fontSize: 16
+    fontSize: 16,
+    flexShrink: 1,
+    minWidth: 0
   },
   followButton: {
     paddingVertical: 6,

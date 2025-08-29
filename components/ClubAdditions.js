@@ -1,11 +1,11 @@
-import { StyleSheet, Text, SafeAreaView, View, TouchableOpacity, FlatList, TextInput, ScrollView, Image, Modal } from 'react-native';
+import { StyleSheet, Text, SafeAreaView, View, TouchableOpacity, TouchableWithoutFeedback, FlatList, TextInput, ScrollView, Image, Modal } from 'react-native';
 import React, { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import * as ImagePicker from 'expo-image-picker';
 import cities from '../assets/cities.json';
 import { db } from '../config/firebase'; 
-import { collection, addDoc, doc, setDoc, query, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc, doc, setDoc, query, where, getDocs, getDoc } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 
 const CLUB_TYPES = [
@@ -193,7 +193,13 @@ export default function ClubAdditions({ navigation }) {
       <View style={[styles.topRow, { paddingTop: 8, paddingHorizontal: 16 }]}>
         <TouchableOpacity
           style={[styles.closeButton, { backgroundColor: theme.primary }]}
-          onPress={() => setActiveStep((prev) => Math.max(prev - 1, 1))}
+          onPress={() => {
+            if (activeStep > 1) {
+              setActiveStep(prev => prev - 1);
+            } else {
+              navigation.goBack();
+            }
+          }}
         >
           <Ionicons name="arrow-back" size={20} color={theme.iconOnPrimary} />
         </TouchableOpacity>
@@ -404,6 +410,11 @@ export default function ClubAdditions({ navigation }) {
                 const auth = getAuth();
                 const user = auth.currentUser;
 
+                // Fetch the user's full name from the 'users' collection
+                const userDocRef = doc(db, 'users', user.uid);
+                const userSnap = await getDoc(userDocRef);
+                const fullName = userSnap.exists() ? userSnap.data().name || '' : '';
+
                 // Prevent duplicate club creation
                 const duplicateCheckQuery = query(
                   collection(db, 'clubs'),
@@ -426,13 +437,24 @@ export default function ClubAdditions({ navigation }) {
                   privacy: selectedPrivacy,
                   location: selectedLocation,
                   createdAt: new Date(),
-                  createdBy: user.uid
+                  createdBy: user.uid,
+                  ownerId: user.uid,         // 👈 Store the owner’s user_id
+                  ownerName: fullName        // 👈 Store the owner’s full name
                 });
 
                 await setDoc(doc(db, 'clubs', clubRef.id, 'members', user.uid), {
                   userId: user.uid,
                   role: 'admin',
                   joinedAt: new Date()
+                });
+
+                // Also update the user's joined_clubs subcollection
+                await setDoc(doc(db, 'users', user.uid, 'joined_clubs', clubRef.id), {
+                  clubId: clubRef.id,
+                  joinedAt: new Date(),
+                  role: 'admin',
+                  clubName: clubName.trim(),
+                  clubImage: image
                 });
 
                 navigation.navigate('Clubs');
@@ -470,11 +492,15 @@ export default function ClubAdditions({ navigation }) {
       visible={citySearchModalVisible}
       onRequestClose={() => setCitySearchModalVisible(false)}
     >
-      <View style={{
-        flex: 1,
-        justifyContent: 'flex-end',
-        backgroundColor: 'rgba(0,0,0,0.4)',
-      }}>
+      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+        {/* Backdrop press to close */}
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setCitySearchModalVisible(false)}
+          style={{ flex: 1 }}
+        />
+
+        {/* Bottom sheet */}
         <View style={{
           height: '75%',
           backgroundColor: theme.background,
@@ -482,9 +508,26 @@ export default function ClubAdditions({ navigation }) {
           borderTopRightRadius: 16,
           padding: 20
         }}>
-          <Text style={{ fontSize: 18, fontWeight: 'bold', color: theme.text, marginBottom: 12 }}>
-            Choose a City
-          </Text>
+          {/* Sheet header with close button */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', color: theme.text }}>
+              Choose a City
+            </Text>
+            <TouchableOpacity
+              onPress={() => setCitySearchModalVisible(false)}
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 17,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: theme.primary
+              }}
+            >
+              <Ionicons name="close" size={20} color={theme.iconOnPrimary} />
+            </TouchableOpacity>
+          </View>
+
           <TextInput
             placeholder="Search cities..."
             placeholderTextColor={theme.placeholder}

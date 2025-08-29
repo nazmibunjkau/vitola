@@ -45,6 +45,74 @@ export default function CigarDetails() {
   const [humidors, setHumidors] = useState([]);
   const [selectedHumidorIds, setSelectedHumidorIds] = useState([]);
 
+  // Track whether this cigar exists in ANY of the user's humidors
+  const [isInAnyHumidor, setIsInAnyHumidor] = useState(false);
+  // Track the exact humidor/doc id to remove (handles legacy slugged docs too)
+  const [removalTarget, setRemovalTarget] = useState(null); // { humidorId: string, docId: string }
+
+  // Prefer canonical id; fall back to legacy fields if present
+  const getCanonicalCigarId = (c) => {
+    if (!c) return null;
+    // prefer explicit doc id, then common alternates
+    return c.id || c.cigarId || c.cigar_id || c.cigarID || null;
+  };
+  const getLegacySlug = (c) => {
+    if (!c?.name) return null;
+    return c.name.toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-');
+  };
+
+  const checkCigarInAnyHumidor = async () => {
+    try {
+      setRemovalTarget(null);
+      if (!user?.uid || !cigar) {
+        setIsInAnyHumidor(false);
+        return;
+      }
+      const uid = user.uid;
+      const canonical = getCanonicalCigarId(cigar);
+      const legacy = getLegacySlug(cigar);
+      if (!canonical && !legacy) {
+        console.warn('No usable cigar key found on object passed to CigarDetails:', cigar);
+        setIsInAnyHumidor(false);
+        return;
+      }
+      const humidorCol = collection(db, 'users', uid, 'humidors');
+      const humidorSnap = await getDocs(humidorCol);
+      let found = false;
+      for (const h of humidorSnap.docs) {
+        let matchedDocId = null;
+        if (canonical) {
+          const cRef1 = doc(db, 'users', uid, 'humidors', h.id, 'cigars', canonical);
+          const cSnap1 = await getDoc(cRef1);
+          if (cSnap1.exists()) {
+            matchedDocId = canonical;
+          }
+        }
+        if (!matchedDocId && legacy) {
+          const cRef2 = doc(db, 'users', uid, 'humidors', h.id, 'cigars', legacy);
+          const cSnap2 = await getDoc(cRef2);
+          if (cSnap2.exists()) {
+            matchedDocId = legacy;
+          }
+        }
+        if (matchedDocId) {
+          found = true;
+          setRemovalTarget({ humidorId: h.id, docId: matchedDocId });
+          break;
+        }
+      }
+      setIsInAnyHumidor(found);
+    } catch (e) {
+      setIsInAnyHumidor(false);
+      setRemovalTarget(null);
+      console.warn('checkCigarInAnyHumidor failed', e);
+    }
+  };
+
+  useEffect(() => {
+    checkCigarInAnyHumidor();
+  }, [user?.uid, cigar]);
+
   // Function to add cigar to selected humidor
   const handleAddToHumidor = async (humidorId) => {
     try {
@@ -74,7 +142,7 @@ export default function CigarDetails() {
         return;
       }
 
-      const cigarId = cigar?.id || cigar?.name?.toLowerCase().replace(/\s+/g, '-');
+      const cigarId = getCanonicalCigarId(cigar);
       if (!cigarId) {
         console.error('Cigar ID is missing.');
         alert('This cigar is missing an ID and cannot be added.');
@@ -95,6 +163,8 @@ export default function CigarDetails() {
         quantity: 1,
       });
 
+      // Re-check presence so UI shows the remove button if necessary
+      await checkCigarInAnyHumidor();
       Alert.alert('Success', 'Cigar added to your humidor!');
     } catch (error) {
       console.error('Failed to add cigar:', error);
@@ -314,15 +384,15 @@ export default function CigarDetails() {
     for (let i = 1; i <= 5; i++) {
       if (i <= Math.floor(roundedRating)) {
         stars.push(
-          <FontAwesome5 key={i} name="star" size={16} color={theme.highlight} solid />
+          <FontAwesome5 key={i} name="star" size={16} color={theme.primary} solid />
         );
       } else if (i === Math.ceil(roundedRating) && roundedRating % 1 !== 0) {
         stars.push(
-          <FontAwesome5 key={i} name="star-half-alt" size={16} color={theme.highlight} solid />
+          <FontAwesome5 key={i} name="star-half-alt" size={16} color={theme.primary} solid />
         );
       } else {
         stars.push(
-          <FontAwesome5 key={i} name="star" size={16} color={theme.placeholder} solid />
+          <FontAwesome5 key={i} name="star" size={16} color={theme.primary} solid style={{ opacity: 0.35 }} />
         );
       }
     }
@@ -520,28 +590,60 @@ export default function CigarDetails() {
           <Ionicons name="add-circle-outline" size={24} color={theme.iconOnPrimary} />
           <Text style={styles.buttonText}>Add to My Humidor</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.removeButton}
-          onPress={async () => {
-            try {
-              if (!user?.uid || !humidorId || !cigar?.id) {
-                Alert.alert('Error', 'Missing information to remove cigar.');
-                return;
+        {isInAnyHumidor && removalTarget && (
+          <TouchableOpacity
+            style={styles.removeButton}
+            onPress={async () => {
+              try {
+                if (!user?.uid) {
+                  Alert.alert('Error', 'User not found.');
+                  return;
+                }
+                let targetHumidorId = removalTarget.humidorId;
+                let targetDocId = removalTarget.docId;
+
+                // If a specific humidorId was provided via route params, prefer that
+                if (humidorId) {
+                  const canonical = getCanonicalCigarId(cigar);
+                  const legacy = getLegacySlug(cigar);
+                  // Try canonical first, then legacy under the provided humidor
+                  if (canonical) {
+                    const ref1 = doc(db, 'users', user.uid, 'humidors', humidorId, 'cigars', canonical);
+                    const snap1 = await getDoc(ref1);
+                    if (snap1.exists()) {
+                      targetHumidorId = humidorId;
+                      targetDocId = canonical;
+                    }
+                  }
+                  if ((!targetDocId || targetHumidorId !== humidorId) && legacy) {
+                    const ref2 = doc(db, 'users', user.uid, 'humidors', humidorId, 'cigars', legacy);
+                    const snap2 = await getDoc(ref2);
+                    if (snap2.exists()) {
+                      targetHumidorId = humidorId;
+                      targetDocId = legacy;
+                    }
+                  }
+                }
+
+                if (!targetHumidorId || !targetDocId) {
+                  Alert.alert('Error', 'Could not locate this cigar in your humidors.');
+                  return;
+                }
+
+                const cigarRef = doc(db, 'users', user.uid, 'humidors', targetHumidorId, 'cigars', targetDocId);
+                await deleteDoc(cigarRef);
+                Alert.alert('Removed', 'Cigar removed from your humidor.');
+                await checkCigarInAnyHumidor();
+              } catch (error) {
+                console.error('Failed to remove cigar:', error);
+                Alert.alert('Error', 'Failed to remove cigar from humidor.');
               }
-              const cigarId = cigar.id;
-              const cigarRef = doc(db, 'users', user.uid, 'humidors', humidorId, 'cigars', cigarId);
-              await deleteDoc(cigarRef);
-              Alert.alert('Removed', 'Cigar removed from your humidor.');
-              navigation.goBack();
-            } catch (error) {
-              console.error('Failed to remove cigar:', error);
-              Alert.alert('Error', 'Failed to remove cigar from humidor.');
-            }
-          }}
-        >
-          <Ionicons name="remove-circle-outline" size={24} color="#fff" />
-          <Text style={styles.buttonText}>Remove from Humidor</Text>
-        </TouchableOpacity>
+            }}
+          >
+            <Ionicons name="remove-circle-outline" size={24} color="#fff" />
+            <Text style={styles.buttonText}>Remove from Humidor</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Humidor selection modal */}

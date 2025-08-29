@@ -1,20 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-  ScrollView,
-  Modal,
-  Image,
-  Keyboard,
-  TouchableWithoutFeedback,
-  Dimensions,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native'
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Modal, Image, Keyboard, TouchableWithoutFeedback, Dimensions, KeyboardAvoidingView, Platform } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { useNavigation } from '@react-navigation/native'
 import { useTheme } from '../context/ThemeContext'
@@ -22,7 +7,6 @@ import * as ImagePicker from 'expo-image-picker';
 import { collection, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { getAuth } from 'firebase/auth';
-import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import Autocomplete from 'react-native-autocomplete-input';
 import cities from '../assets/cities.json';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
@@ -43,6 +27,7 @@ export default function SessionAdditions() {
   const [selectedCity, setSelectedCity] = useState('');
 
   const [cigarType, setCigarType] = useState('')
+  const [selectedCigar, setSelectedCigar] = useState(null); // { id, name }
   const [sessionFeeling, setSessionFeeling] = useState('')
   const [privateNotes, setPrivateNotes] = useState('')
   const [gearUsed, setGearUsed] = useState('')
@@ -104,6 +89,7 @@ export default function SessionAdditions() {
         humidor: selectedHumidor?.title || '',
         humidor_id: selectedHumidor?.id || '',
         cigar: cigarType,
+        cigarId: selectedCigar?.id || null, // ✅ store catalog cigar id for Home → CigarDetails
         sessionFeeling,
         privateNotes,
         gearUsed,
@@ -120,6 +106,7 @@ export default function SessionAdditions() {
       setMedia(null);
       setMediaSize({ width: 0, height: 0 });
       setCigarType('');
+      setSelectedCigar(null);
       setSessionFeeling('');
       setPrivateNotes('');
       setGearUsed('');
@@ -223,20 +210,20 @@ export default function SessionAdditions() {
               <Text style={[styles.headerTitle, { color: theme.text }]}>Save Session</Text>
             </View>
             <TextInput
-              style={[styles.titleInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.text }]}
+              style={[styles.titleInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.searchPlaceholder }]}
               value={title}
               onChangeText={setTitle}
               placeholder="e.g. Afternoon Smoke on Patio"
-              placeholderTextColor={theme.placeholder}
+              placeholderTextColor={theme.searchPlaceholder}
             />
 
             <TextInput
-              style={[styles.descriptionInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.text }]}
+              style={[styles.descriptionInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.searchPlaceholder }]}
               value={description}
               onChangeText={setDescription}
               placeholder="Add a description"
               multiline
-              placeholderTextColor={theme.placeholder}
+              placeholderTextColor={theme.searchPlaceholder}
             />
 
             <TouchableOpacity
@@ -368,6 +355,9 @@ export default function SessionAdditions() {
                           style={{
                             paddingVertical: 8,
                             paddingHorizontal: 12,
+                            backgroundColor: theme.background,
+                            borderWidth: 1,
+                            borderColor: theme.background,
                           }}
                         >
                           <Text style={{ color: theme.text }}>{item.name}</Text>
@@ -409,29 +399,29 @@ export default function SessionAdditions() {
 
             <Text style={[styles.selectorLabel, { color: theme.text }]}>Private Notes</Text>
             <TextInput
-              style={[styles.notesInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.text }]}
+              style={[styles.notesInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.searchPlaceholder }]}
               value={privateNotes}
               onChangeText={setPrivateNotes}
               placeholder="Any private notes"
               multiline
-              placeholderTextColor={theme.placeholder}
+              placeholderTextColor={theme.searchPlaceholder}
             />
 
             <Text style={[styles.selectorLabel, { color: theme.text }]}>Accessories / Gear Used</Text>
             <TextInput
-              style={[styles.gearInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.text }]}
+              style={[styles.gearInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.searchPlaceholder }]}
               value={gearUsed}
               onChangeText={setGearUsed}
               placeholder="e.g. Lighter, Cutter, Ashtray"
-              placeholderTextColor={theme.placeholder}
+              placeholderTextColor={theme.searchPlaceholder}
             />
             <Text style={[styles.selectorLabel, { color: theme.text }]}>Drink Pairing</Text>
             <TextInput
-              style={[styles.gearInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.text }]}
+              style={[styles.gearInput, { borderColor: borderColorValue, backgroundColor: theme.inputBackground, color: theme.searchPlaceholder }]}
               value={drinkPairing}
               onChangeText={setDrinkPairing}
               placeholder="e.g. Whiskey, Coffee, Water"
-              placeholderTextColor={theme.placeholder}
+              placeholderTextColor={theme.searchPlaceholder}
             />
 
             <TouchableOpacity onPress={handleDiscard} style={styles.discardButton}>
@@ -532,10 +522,13 @@ export default function SessionAdditions() {
                               key={item.id}
                               style={styles.optionRow}
                               onPress={() => {
+                                const catalogId = item.cigarId || item.catalogId || item.masterId || item.catalog_id || item.master_id || item.id; // fallbacks
                                 if (item.name === cigarType) {
                                   setCigarType('');
+                                  setSelectedCigar(null);
                                 } else {
                                   setCigarType(item.name);
+                                  setSelectedCigar({ id: catalogId, name: item.name });
                                 }
                                 setTypeModalVisible(false);
                               }}

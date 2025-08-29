@@ -248,7 +248,7 @@ const getStyles = (theme) =>
       bottom: 0,
       left: 0,
       right: 0,
-      backgroundColor: theme.primary || theme.background,
+      backgroundColor: '#4b382a',
       paddingHorizontal: 24,
       paddingTop: 16,
       paddingBottom: 32,
