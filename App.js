@@ -32,6 +32,7 @@ import ClubDetails from './components/ClubDetails';
 import Sessions from './screens/Sessions';
 import Profile from './screens/Profile';
 import FullProfile from './screens/FullProfile';
+import Aficionado from './components/AficionadoApplication';
 
 const Stack = createStackNavigator()
 
@@ -87,6 +88,7 @@ function ThemeConsumer() {
             <Stack.Screen name='Sessions' component={Sessions} />
             <Stack.Screen name='Profile' component={Profile} />
             <Stack.Screen name='FullProfile' component={FullProfile} />
+            <Stack.Screen name='Aficionado' component={Aficionado} />
           </>
         ) : (
           <>

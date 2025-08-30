@@ -3,7 +3,8 @@ import { doc, updateDoc, getDoc, arrayUnion, arrayRemove, collection, getDocs, q
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db } from '../config/firebase';
 import { Image } from 'react-native';
-import { StyleSheet, View, Text, TouchableOpacity, TextInput, ScrollView } from 'react-native'
+import { StyleSheet, View, Text, TouchableOpacity, TextInput, ScrollView, Alert, Modal } from 'react-native'
+import { KeyboardAvoidingView, Keyboard, TouchableWithoutFeedback, Platform } from 'react-native';
 import React, { useEffect, useState } from "react"
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { auth } from '../config/firebase';
@@ -42,8 +43,118 @@ export default function Profile({ navigation, route }) {
   const [ownerClubIds, setOwnerClubIds] = useState([]);
   const [commentsMap, setCommentsMap] = useState({});
   const [likesMap, setLikesMap] = useState({});
-const [isLikedMap, setIsLikedMap] = useState({});
-const [isVerified, setIsVerified] = useState(false);
+  const [isLikedMap, setIsLikedMap] = useState({});
+  const [isVerified, setIsVerified] = useState(false);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [selectedPost, setSelectedPost] = useState(null);
+  const [editDraft, setEditDraft] = useState({
+    title: '',
+    description: '',
+    gearUsed: '',
+    drinkPairing: '',
+    sessionFeeling: '',
+    media: '',
+  });
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  const SESSION_FEEL_OPTIONS = [
+    'Relaxing',
+    'Social',
+    'Celebratory',
+    'Reflective',
+    'Routine'
+  ];
+  const [sessionFeelMenuOpen, setSessionFeelMenuOpen] = useState(false);
+
+  const startEditPost = (post) => {
+    if (!post) return;
+    setSelectedPost(post);
+    setEditDraft({
+      title: post.title || '',
+      description: post.description || '',
+      gearUsed: post.gearUsed || '',
+      drinkPairing: post.drinkPairing || '',
+      sessionFeeling: post.sessionFeeling || '',
+      media: '',
+      __localMedia: false,
+    });
+    setEditModalVisible(true);
+  };
+
+  const pickNewMediaForEdit = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Allow photo library access to change the image.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+      });
+      if (result.canceled) return;
+      const uri = result.assets?.[0]?.uri;
+      if (uri) setEditDraft((d) => ({ ...d, media: uri, __localMedia: true }));
+    } catch (e) {
+      console.warn('pick image failed', e);
+    }
+  };
+
+  const saveEditedPost = async () => {
+    if (!selectedPost?.id) return;
+    const postId = selectedPost.id;
+
+    const payload = {
+      title: editDraft.title?.trim() || '',
+      description: editDraft.description?.trim() || '',
+      gearUsed: editDraft.gearUsed?.trim() || '',
+      drinkPairing: editDraft.drinkPairing?.trim() || '',
+      sessionFeeling: editDraft.sessionFeeling?.trim() || '',
+    };
+
+    try {
+      // If a local image was chosen, upload it now and use its download URL
+      if (editDraft.media && editDraft.__localMedia) {
+        const response = await fetch(editDraft.media);
+        const blob = await response.blob();
+        const storage = getStorage();
+        const filename = `${postId}_${Date.now()}.jpg`;
+        const storageRef = ref(storage, `user_activities/${postId}/${filename}`);
+        await uploadBytes(storageRef, blob);
+        const downloadURL = await getDownloadURL(storageRef);
+        payload.media = downloadURL;
+      } else if (editDraft.media) {
+        // A remote URL already set, keep it
+        payload.media = editDraft.media;
+      } else {
+        // No media present – explicitly clear if you want to remove previous media
+        // payload.media = firebase.firestore.FieldValue.delete();
+      }
+
+      await updateDoc(doc(db, 'user_activities', postId), payload);
+
+      // Optimistically update local list
+      setActivities((prev) =>
+        prev.map((p) => (p.id === postId ? { ...p, ...payload } : p))
+      );
+      setEditModalVisible(false);
+      setSelectedPost(null);
+    } catch (e) {
+      console.error('saveEditedPost failed', e);
+      Alert.alert('Update failed', 'Could not save changes to this post.');
+    }
+  };
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => {
+      try { showSub?.remove(); } catch {}
+      try { hideSub?.remove(); } catch {}
+    };
+  }, []);
+  
   useEffect(() => {
     // Subscribe to comments subcollections for each visible post
     if (!activities || activities.length === 0) {
@@ -368,9 +479,37 @@ const [isVerified, setIsVerified] = useState(false);
     }
   };
 
+  const handleDeletePost = async (postId) => {
+    Alert.alert(
+      "Delete Post",
+      "Are you sure you want to delete this post? This action cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deleteDoc(doc(db, "user_activities", postId));
+              setActivities(prev => prev.filter(p => p.id !== postId));
+              setModalVisible(false);
+              setSelectedPost(null);
+            } catch (e) {
+              Alert.alert("Error", "Could not delete post.");
+            }
+          }
+        }
+      ]
+    );
+  };
+
   return (
-    
-    <View style={{ flex: 1, justifyContent: 'space-evenly', backgroundColor: theme.background }}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+    >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
         <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
             {route.params?.fromOutside && (
               <TouchableOpacity
@@ -676,9 +815,19 @@ const [isVerified, setIsVerified] = useState(false);
                                 borderColor: theme.border || 'transparent'
                               }}
                             >
-                                <Text style={{ fontWeight: "bold", color: theme.text, fontSize: 20, marginBottom: 8 }}>
-                                    {activity.title}
+                              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                <Text style={{ fontWeight: "bold", color: theme.text, fontSize: 20 }} numberOfLines={2}>
+                                  {activity.title}
                                 </Text>
+                                <TouchableOpacity
+                                  onPress={() => { setSelectedPost(activity); setModalVisible(true); }}
+                                  accessibilityRole="button"
+                                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                  style={{ paddingHorizontal: 6, paddingVertical: 4 }}
+                                >
+                                  <Ionicons name="ellipsis-vertical" size={20} color={theme.text} />
+                                </TouchableOpacity>
+                              </View>
                                 <Text style={{ color: theme.text, marginBottom: 10 }}>{activity.description}</Text>
                                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
                                     <View style={{ alignItems: 'flex-start', flex: 1 }}>
@@ -816,9 +965,349 @@ const [isVerified, setIsVerified] = useState(false);
                     )))}
                 </View>
             </ScrollView>
+        <Modal
+          animationType="slide"
+          transparent={true}
+          visible={modalVisible}
+          onRequestClose={() => setModalVisible(false)}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            onPressOut={() => setModalVisible(false)}
+            style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}
+          >
+            <View style={{
+              backgroundColor: theme.background,
+              borderTopLeftRadius: 16,
+              borderTopRightRadius: 16,
+              paddingHorizontal: 20,
+              paddingTop: 12,
+              paddingBottom: 28,
+            }}>
+              {!!selectedPost && (
+                <View style={{ marginBottom: 4 }}>
+                  {isOwnProfile ? (
+                    <>
+                      <TouchableOpacity
+                        style={{ paddingVertical: 14 }}
+                        onPress={() => {
+                          setModalVisible(false);
+                          startEditPost(selectedPost);
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Ionicons name="create-outline" size={20} color={theme.primary} style={{ marginRight: 12 }} />
+                          <Text style={{ color: theme.primary, fontWeight: 'bold' }}>Edit Post</Text>
+                        </View>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={{ paddingVertical: 14 }}
+                        onPress={() => {
+                          setModalVisible(false);
+                          handleDeletePost(selectedPost.id);
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Ionicons name="trash-outline" size={20} color="#d32f2f" style={{ marginRight: 12 }} />
+                          <Text style={{ color: "#d32f2f", fontWeight: "bold" }}>Delete Post</Text>
+                        </View>
+                      </TouchableOpacity>
+                    </>
+                  ) : (
+                    <TouchableOpacity
+                      style={{ paddingVertical: 14 }}
+                      onPress={() => {
+                        setModalVisible(false);
+                        Alert.alert("Reported", "Thank you for reporting this post.");
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Ionicons name="flag-outline" size={20} color={theme.primary} style={{ marginRight: 12 }} />
+                        <Text style={{ color: theme.primary }}>Report</Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+
+                  <TouchableOpacity
+                    style={{ paddingVertical: 14 }}
+                    onPress={() => setModalVisible(false)}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="close-outline" size={20} color={theme.text} style={{ marginRight: 12 }} />
+                      <Text style={{ color: theme.text }}>Cancel</Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          </TouchableOpacity>
+        </Modal>
+        <Modal
+          animationType="slide"
+          transparent={true}
+          visible={editModalVisible}
+          onRequestClose={() => setEditModalVisible(false)}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            onPressOut={() => {
+              if (keyboardVisible) {
+                Keyboard.dismiss();
+                setSessionFeelMenuOpen(false);
+                return; // don't close the modal when dismissing keyboard
+              }
+              setSessionFeelMenuOpen(false);
+              setEditModalVisible(false);
+            }}
+            style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}
+          >
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}
+              style={{ width: '100%' }}
+            >
+              {/* Tapping anywhere on the sheet (not inputs) will dismiss keyboard only */}
+              <TouchableWithoutFeedback onPress={() => { setSessionFeelMenuOpen(false); Keyboard.dismiss(); }}>
+                <View
+                  style={{
+                    maxHeight: '100%',
+                    backgroundColor: theme.background,
+                    borderTopLeftRadius: 16,
+                    borderTopRightRadius: 16,
+                    paddingTop: 16,
+                    paddingBottom: 48,
+                  }}
+                >
+                  <ScrollView
+                    contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24 }}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
+                    automaticallyAdjustKeyboardInsets
+                  >
+                    <Text style={{ color: theme.text, fontWeight: '700', fontSize: 18, marginBottom: 8 }}>
+                      Edit Post
+                    </Text>
+
+                    <Text style={{ color: theme.text, fontSize: 12, marginBottom: 6 }}>Title</Text>
+                    <TextInput
+                      value={editDraft.title}
+                      onChangeText={(t) => setEditDraft((d) => ({ ...d, title: t }))}
+                      placeholder="Title"
+                      placeholderTextColor={theme.searchPlaceholder}
+                      style={{
+                        backgroundColor: inputBg,
+                        color: inputText,
+                        borderWidth: 1,
+                        borderColor: inputBorder,
+                        borderRadius: 8,
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        marginBottom: 10,
+                      }}
+                      keyboardAppearance={isDark ? 'dark' : 'light'}
+                      selectionColor={theme.searchPlaceholder}
+                      returnKeyType="done"
+                    />
+
+                    <Text style={{ color: theme.text, fontSize: 12, marginBottom: 6 }}>Description</Text>
+                    <TextInput
+                      value={editDraft.description}
+                      onChangeText={(t) => setEditDraft((d) => ({ ...d, description: t }))}
+                      placeholder="Describe your session"
+                      placeholderTextColor={theme.searchPlaceholder}
+                      style={{
+                        backgroundColor: inputBg,
+                        color: inputText,
+                        borderWidth: 1,
+                        borderColor: inputBorder,
+                        borderRadius: 8,
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        minHeight: 80,
+                        textAlignVertical: 'top',
+                        marginBottom: 10,
+                      }}
+                      multiline
+                      keyboardAppearance={isDark ? 'dark' : 'light'}
+                      selectionColor={theme.searchPlaceholder}
+                    />
+
+                    <View style={{ flexDirection: 'row', columnGap: 10 }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: theme.text, fontSize: 12, marginBottom: 6 }}>Accessories</Text>
+                        <TextInput
+                          value={editDraft.gearUsed}
+                          onChangeText={(t) => setEditDraft((d) => ({ ...d, gearUsed: t }))}
+                          placeholder="Cutters, lighters..."
+                          placeholderTextColor={theme.searchPlaceholder}
+                          style={{
+                            backgroundColor: inputBg,
+                            color: inputText,
+                            borderWidth: 1,
+                            borderColor: inputBorder,
+                            borderRadius: 8,
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            marginBottom: 10,
+                          }}
+                          keyboardAppearance={isDark ? 'dark' : 'light'}
+                          selectionColor={theme.searchPlaceholder}
+                          returnKeyType="done"
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: theme.text, fontSize: 12, marginBottom: 6 }}>Drink Pairing</Text>
+                        <TextInput
+                          value={editDraft.drinkPairing}
+                          onChangeText={(t) => setEditDraft((d) => ({ ...d, drinkPairing: t }))}
+                          placeholder="Coffee, bourbon..."
+                          placeholderTextColor={theme.searchPlaceholder}
+                          style={{
+                            backgroundColor: inputBg,
+                            color: inputText,
+                            borderWidth: 1,
+                            borderColor: inputBorder,
+                            borderRadius: 8,
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            marginBottom: 10,
+                          }}
+                          keyboardAppearance={isDark ? 'dark' : 'light'}
+                          selectionColor={theme.searchPlaceholder}
+                          returnKeyType="done"
+                        />
+                      </View>
+                    </View>
+
+                    <Text style={{ color: theme.text, fontSize: 12, marginBottom: 6 }}>Session Feel</Text>
+                    <View style={{ position: 'relative', marginBottom: 20 }}>
+                      <TouchableOpacity
+                        activeOpacity={0.9}
+                        onPress={() => setSessionFeelMenuOpen((v) => !v)}
+                        style={{
+                          backgroundColor: inputBg,
+                          borderWidth: 1,
+                          borderColor: inputBorder,
+                          borderRadius: 8,
+                          paddingHorizontal: 12,
+                          paddingVertical: 10,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                        }}
+                     >
+                        <Text style={{ color: editDraft.sessionFeeling ? inputText : theme.searchPlaceholder }}>
+                          {editDraft.sessionFeeling || 'Select a feeling'}
+                        </Text>
+                        <Ionicons name={sessionFeelMenuOpen ? 'chevron-up' : 'chevron-down'} size={18} color={'#4b382a'} />
+                      </TouchableOpacity>
+
+                      {sessionFeelMenuOpen && (
+                        <View
+                          style={{
+                            position: 'absolute',
+                            top: 46,
+                            left: 0,
+                            right: 0,
+                            backgroundColor: inputBg,
+                            borderWidth: 1,
+                            borderColor: inputBorder,
+                            borderRadius: 8,
+                            overflow: 'hidden',
+                            zIndex: 10,
+                          }}
+                        >
+                          {SESSION_FEEL_OPTIONS.map((opt, idx) => (
+                            <TouchableOpacity
+                              key={opt}
+                              onPress={() => {
+                                setEditDraft((d) => ({ ...d, sessionFeeling: opt }));
+                                setSessionFeelMenuOpen(false);
+                              }}
+                              style={{ paddingVertical: 10, paddingHorizontal: 12, backgroundColor: inputBg }}
+                            >
+                              <Text style={{ color: inputText }}>{opt}</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20, justifyContent: 'center' }}>
+                      <TouchableOpacity
+                        onPress={pickNewMediaForEdit}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          alignSelf: 'center',
+                          paddingVertical: 14,
+                          paddingHorizontal: 12,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: theme.primary,
+                        }}
+                      >
+                        <Ionicons name="image-outline" size={18} color={theme.primary} />
+                        <Text style={{ color: theme.primary, marginLeft: 8, fontWeight: '600', textAlign: 'center' }}>
+                          {editDraft.__localMedia ? 'Change Selected Image' : (editDraft.media ? 'Replace Image' : 'Add Image')}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                    {/* Preview newly picked image in edit modal */}
+                    {editDraft.__localMedia && !!editDraft.media ? (
+                      <View style={{ marginBottom: 20 }}>
+                        <View style={{ position: 'relative', marginTop: 12 }}>
+                          <Image
+                            source={{ uri: editDraft.media }}
+                            style={{
+                              width: '100%',
+                              height: 200,
+                              borderRadius: 8,
+                            }}
+                            resizeMode="contain"
+                          />
+                          <TouchableOpacity
+                            onPress={() => setEditDraft(d => ({ ...d, media: '', __localMedia: false }))}
+                            style={{
+                              position: 'absolute',
+                              right: 28,
+                              backgroundColor: isDark ? theme.primary : theme.primary,
+                              borderRadius: 12,
+                              padding: 4,
+                            }}
+                          >
+                            <Ionicons name="close" size={18} color={isDark ? '#000' : '#fff'} />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ) : null}
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingBottom: 8 }}>
+                      <TouchableOpacity
+                        onPress={() => { setEditModalVisible(false); setSelectedPost(null); }}
+                        style={{ paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, borderWidth: 1, borderColor: theme.primary }}
+                      >
+                        <Text style={{ color: theme.text }}>Cancel</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={saveEditedPost}
+                        style={{ paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, backgroundColor: theme.primary, borderWidth: 1, borderColor: theme.primary }}
+                      >
+                        <Text style={{ color: theme.iconOnPrimary || '#fff', fontWeight: '700' }}>Save Changes</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </ScrollView>
+                </View>
+              </TouchableWithoutFeedback>
+            </KeyboardAvoidingView>
+          </TouchableOpacity>
+        </Modal>
         </SafeAreaView>
-    </View>
-  )
+      </TouchableWithoutFeedback>
+    </KeyboardAvoidingView>
+  );
 }
 
 const styles = StyleSheet.create({

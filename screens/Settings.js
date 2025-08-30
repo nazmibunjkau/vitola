@@ -44,6 +44,9 @@ export default function Settings({ navigation }) {
       case 'FAQ':
         navigation.navigate('FAQ');
         break;
+      case 'Aficionado Badge':
+        navigation.navigate('Aficionado');
+        break;
       default:
         break;
     }
@@ -87,6 +90,7 @@ export default function Settings({ navigation }) {
           <View style={[styles.optionBox, {backgroundColor: theme.accent}]}>
             {[
               { label: "Account Information", icon: "person-outline" },
+              { label: "Aficionado Badge", icon: "ribbon-outline" },
               { label: "Notifications", icon: "notifications-outline" },
               { label: "App Appearance", icon: "color-palette-outline" },
               { label: "Data Usage", icon: "cloud-outline" },

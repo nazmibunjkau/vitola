@@ -555,6 +555,19 @@ export default function HumidorAdditions() {
     </View>
   );
   
+  // Explicitly set status (active/inactive)
+  const handleSetStatus = async (nextActive) => {
+    if (!humidorId || !userId) return;
+    const newStatus = nextActive ? 'active' : 'inactive';
+    try {
+      const humidorRef = doc(db, 'users', userId, 'humidors', humidorId);
+      await updateDoc(humidorRef, { humidor_status: newStatus });
+      setIsActive(nextActive);
+    } catch (error) {
+      console.error('Failed to set status:', error);
+    }
+  };
+
   // Update status in Firestore when toggled
   const handleToggleStatus = async () => {
     if (!humidorId || !userId) return;
@@ -691,23 +704,22 @@ export default function HumidorAdditions() {
         <View style={styles.statusRow}>
           <View style={styles.statusSliderContainer}>
             <View style={styles.statusLabels}>
-              <Text style={[styles.statusOption, isActive && styles.statusOptionActive]}>
-                Active
-              </Text>
-              <Text style={[styles.statusOption, !isActive && styles.statusOptionActive]}>
-                Inactive
-              </Text>
+              <TouchableOpacity onPress={() => handleSetStatus(true)} hitSlop={{top:10,bottom:10,left:10,right:10}}>
+                <Text style={[styles.statusOption, isActive && styles.statusOptionActive]}>Active</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => handleSetStatus(false)} hitSlop={{top:10,bottom:10,left:10,right:10}}>
+                <Text style={[styles.statusOption, !isActive && styles.statusOptionActive]}>Inactive</Text>
+              </TouchableOpacity>
             </View>
-          <TouchableOpacity
-            style={[
-              styles.statusOverlay,
-              { left: isActive ? 0 : '50%', backgroundColor: isActive ? 'green' : 'red' },
-            ]}
-            onPress={handleToggleStatus}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.sliderValue}>{isActive ? 'Active' : 'Inactive'}</Text>
-          </TouchableOpacity>
+            <View
+              style={[
+                styles.statusOverlay,
+                { left: isActive ? 0 : '50%', backgroundColor: isActive ? 'green' : 'red' },
+              ]}
+              pointerEvents="none"
+            >
+              <Text style={styles.sliderValue}>{isActive ? 'Active' : 'Inactive'}</Text>
+            </View>
           </View>
           {createdDate && (
             <View style={styles.createdRow}>

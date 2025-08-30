@@ -148,6 +148,23 @@ useEffect(() => {
     </TouchableOpacity>
   );
 
+  const renderEmptyState = () => (
+    <View style={styles.emptyStateContainer}>
+      <MaterialCommunityIcons
+        name="magnify-close"
+        size={42}
+        color={theme.placeholder}
+        style={{ marginBottom: 8 }}
+      />
+      <Text style={[styles.emptyTitle, { color: theme.text }]}>
+        No results for “{searchQuery.trim()}”
+      </Text>
+      <Text style={[styles.emptySubtitle, { color: theme.placeholder }]}>
+        Try the full cigar name (e.g., “{searchQuery.trim()} Robusto”) or check spelling.
+      </Text>
+    </View>
+  );
+
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
       <View style={[styles.container, { backgroundColor: theme.background }]}>
@@ -160,7 +177,8 @@ useEffect(() => {
             style={[styles.input, { color: theme.searchText }]}
             placeholder="Search for a cigar..."
             placeholderTextColor={theme.searchPlaceholder}
-            selectionColor={theme.primary}
+            selectionColor={theme.searchPlaceholder}
+            cursorColor={theme.searchPlaceholder}
             onChangeText={setSearchQuery}
             value={searchQuery}
             onSubmitEditing={() => Keyboard.dismiss()}
@@ -214,6 +232,8 @@ useEffect(() => {
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 20 }}>
             <ActivityIndicator size="large" color={theme.text} />
           </View>
+        ) : allCigars.length === 0 && searchQuery.trim().length > 0 ? (
+          renderEmptyState()
         ) : (
           <FlatList
             data={allCigars}
@@ -324,5 +344,22 @@ const styles = StyleSheet.create({
   searchIcon: {
     marginLeft: 10,
     marginRight: 6,
+  },
+  emptyStateContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    marginBottom: 100,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    textAlign: 'center',
   },
 });
