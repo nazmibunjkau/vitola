@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./img/logo.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./img/logo.png",
       "resizeMode": "contain",
@@ -26,9 +26,6 @@
       "favicon": "./img/logo.png"
     },
     "plugins": [
-      "@react-native-firebase/app",
-      "@react-native-firebase/auth",
-      "@react-native-firebase/crashlytics",
       [
         "expo-build-properties",
         {

@@ -26,7 +26,7 @@ const VISION_URL_LOG = 'https://vision.googleapis.com/v1/images:annotate?key=***
 
 // ⚠️ Direct-to-Google Vision (no backend). Restrict this key in GCP (API restrictions: Vision, and app restrictions for iOS bundle ID / Android SHA + package).
 
-const VISION_API_KEY = 'AIzaSyCJKdW9w8ZPnhJBTpdnGFvS3ZODthJhf3c';
+const VISION_API_KEY = 'AIzaSyCvmjKKG4OPbQcPnzOIbmYJjUrJSH8F4aQ';
 const VISION_URL = `https://vision.googleapis.com/v1/images:annotate?key=${VISION_API_KEY}`;
 
 // --- cancellation + concurrency guard ---

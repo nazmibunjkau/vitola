@@ -16,23 +16,21 @@ export default function NotificationScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [ownerClubIds, setOwnerClubIds] = useState(new Set());
 
+  // --- START: User subcollection notification logic (per Firestore rules) ---
+  const subNotifsRef = React.useRef([]);
   useEffect(() => {
     const userId = auth.currentUser.uid;
-    const q = query(
-      collection(db, 'users', userId, 'notifications'),
-      orderBy('timestamp', 'desc')
-    );
 
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
-      const data = await Promise.all(snapshot.docs.map(async doc => {
-        const notif = { id: doc.id, ...doc.data() };
-        if (notif.fromUserId) {
+    const enrich = async (rows) => {
+      const data = await Promise.all(rows.map(async d => {
+        const notif = { ...d };
+        if (notif.fromUserId && notif.type !== 'eventReminder') {
           try {
             const userDoc = await getDocs(query(collection(db, 'users'), where('__name__', '==', notif.fromUserId)));
             if (!userDoc.empty) {
               const userData = userDoc.docs[0].data();
-              notif.fromUserName = userData.name || 'Someone';
-              notif.fromUserPhoto = userData.photoURL || null;
+              notif.fromUserName = userData.name || userData.displayName || userData.fullName || 'Someone';
+              notif.fromUserPhoto = userData.photoURL || userData.image || null;
               notif.fromUserIsVerified = (userData.subscriptionPlan === 'paid') || (userData.verified === true);
             } else {
               notif.fromUserName = 'Someone';
@@ -48,7 +46,7 @@ export default function NotificationScreen({ navigation }) {
         return notif;
       }));
 
-      // Filter out duplicate follow notifications from the same user
+      // Deduplicate follow notifications (same user)
       const seenFollows = new Set();
       const filteredData = data.filter((notif) => {
         if (notif.type === 'follow') {
@@ -57,22 +55,32 @@ export default function NotificationScreen({ navigation }) {
           seenFollows.add(notif.fromUserId);
           return true;
         }
-        // Always include likes/comments/etc.
         return true;
       });
 
-      const sortedData = filteredData.sort((a, b) => {
+      const withTs = filteredData.filter(n => !!n.timestamp);
+      const sortedData = withTs.sort((a, b) => {
         if (a.timestamp && b.timestamp) {
-          return b.timestamp.seconds - a.timestamp.seconds;
+          const aSec = a.timestamp.seconds || (a.timestamp.toDate ? Math.floor(a.timestamp.toDate().getTime()/1000) : 0);
+          const bSec = b.timestamp.seconds || (b.timestamp.toDate ? Math.floor(b.timestamp.toDate().getTime()/1000) : 0);
+          return bSec - aSec;
         }
         return 0;
       });
+      return sortedData;
+    };
 
-      setNotifications(sortedData);
+    const subQ = query(collection(db, 'users', userId, 'notifications'), orderBy('timestamp', 'desc'));
+    const subUnsub = onSnapshot(subQ, async (snapshot) => {
+      const rows = snapshot.docs.map(doc => ({ id: doc.id, __source: 'sub', ...doc.data() }));
+      subNotifsRef.current = rows;
+      const enriched = await enrich(rows);
+      setNotifications(enriched);
     });
 
-    return unsubscribe;
+    return () => { try { subUnsub(); } catch {} };
   }, []);
+  // --- END: User subcollection notification logic ---
 
   useEffect(() => {
     const userId = auth.currentUser?.uid;
@@ -90,18 +98,12 @@ export default function NotificationScreen({ navigation }) {
     React.useCallback(() => {
       const markNotificationsAsRead = async () => {
         const userId = auth.currentUser.uid;
-        const q = query(
-          collection(db, 'users', userId, 'notifications'),
-          where('read', '==', false)
-        );
-        const snapshot = await getDocs(q);
+        const qSubUnread = query(collection(db, 'users', userId, 'notifications'), where('read','==', false));
+        const snapSub = await getDocs(qSubUnread);
         const batch = writeBatch(db);
-        snapshot.forEach(doc => {
-          batch.update(doc.ref, { read: true });
-        });
+        snapSub.forEach(doc => batch.update(doc.ref, { read: true }));
         await batch.commit();
       };
-
       markNotificationsAsRead();
     }, [])
   );
@@ -110,6 +112,8 @@ export default function NotificationScreen({ navigation }) {
     const userId = auth.currentUser.uid;
     const iOwnThisClub = item?.clubId ? ownerClubIds.has(item.clubId) : false;
     const isSelected = selectedNotifications.has(item.id);
+
+    const isAttendShim = item.type === 'comment' && item.commentText === '__eventAttend__';
 
     const handleDelete = async () => {
       const notifRef = doc(db, 'users', userId, 'notifications', item.id);
@@ -223,6 +227,15 @@ export default function NotificationScreen({ navigation }) {
       </TouchableOpacity>
     );
 
+    const headerTitle =
+      isAttendShim ? 'New Event Attendee' :
+      item.type === 'like' ? 'New Like' :
+      item.type === 'comment' ? 'New Comment' :
+      item.type === 'invite' ? (iOwnThisClub ? 'Join Request' : 'Club Invite') :
+      item.type === 'eventReminder' ? 'Event Reminder' :
+      item.type === 'eventAttend' ? 'New Event Attendee' :
+      'New Follower';
+
     const NotificationContent = (
       <TouchableOpacity
         onPress={() => {
@@ -255,16 +268,18 @@ export default function NotificationScreen({ navigation }) {
           }} />
         )}
         <Image
-          source={{ uri: item.fromUserPhoto || 'https://placehold.co/40x40' }}
+          source={{ uri: item.type === 'eventReminder'
+          ? 'https://placehold.co/40x40?text=%F0%9F%93%85'
+          : (item.fromUserPhoto || 'https://placehold.co/40x40') }}
           style={{ width: 40, height: 40, borderRadius: 20, marginRight: 12 }}
         />
         <View style={{ flex: 1 }}>
           <Text style={[styles.text, { fontWeight: 'bold', color: theme.primary }]}>
-            {item.type === 'like' ? 'New Like' : item.type === 'comment' ? 'New Comment' : item.type === 'invite' ? (iOwnThisClub ? 'Join Request' : 'Club Invite') : 'New Follower'}
+            {headerTitle}
           </Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
             {/* Name + badge */}
-            {!!item.fromUserName && (
+            {item.type !== 'eventReminder' && !!item.fromUserName && (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Text style={[styles.text, { color: theme.primary, fontWeight: '300' }]} numberOfLines={1}>
                   {item.fromUserName}
@@ -278,10 +293,21 @@ export default function NotificationScreen({ navigation }) {
             {item.type === 'like' && (
               <Text style={[styles.text, { color: theme.primary }]}>{' '}liked your post!</Text>
             )}
-            {item.type === 'comment' && (
+            {isAttendShim && (
+              <>
+                <Text style={[styles.text, { color: theme.primary }]}>{' '}is attending your event </Text>
+                <Text style={[styles.text, { color: theme.primary, fontWeight: '300' }]}>
+                  {item.eventTitle || item.clubName || 'Event'}
+                </Text>
+                <Text style={[styles.text, { color: theme.primary }]}>.</Text>
+              </>
+            )}
+            {item.type === 'comment' && !isAttendShim && (
               <>
                 <Text style={[styles.text, { color: theme.primary }]}>{' '}commented: </Text>
-                <Text style={[styles.text, { color: theme.primary }]}>"{item.commentText}"</Text>
+                <Text style={[styles.text, { color: theme.primary }]}>
+                  {item.commentText}
+                </Text>
               </>
             )}
             {item.type === 'follow' && (
@@ -302,8 +328,27 @@ export default function NotificationScreen({ navigation }) {
                 </>
               )
             )}
+            {item.type === 'eventReminder' && (
+              <>
+                <Text style={[styles.text, { color: theme.primary }]}>{' '}Reminder: </Text>
+                <Text style={[styles.text, { color: theme.primary, fontWeight: '300' }]}>
+                  {item.eventTitle || 'Event'}
+                </Text>
+                <Text style={[styles.text, { color: theme.primary }]}>{' '}starts soon.</Text>
+              </>
+            )}
+            {item.type === 'eventAttend' && (
+              <>
+                <Text style={[styles.text, { color: theme.primary }]}>{' '}is attending your event </Text>
+                <Text style={[styles.text, { color: theme.primary, fontWeight: '300' }]}>
+                  {item.eventTitle || item.clubName || 'Event'}
+                </Text>
+                <Text style={[styles.text, { color: theme.primary }]}>.</Text>
+              </>
+            )}
+            
             {/* If there was no fromUserName (fallback), show generic text */}
-            {!item.fromUserName && item.type !== 'invite' && (
+            {!item.fromUserName && item.type !== 'invite' && item.type !== 'eventReminder' && (
               <Text style={[styles.text, { color: theme.primary }]}>
                 {item.type === 'like' && 'Someone liked your post!'}
                 {item.type === 'comment' && `Someone commented: "${item.commentText}"`}
@@ -340,7 +385,7 @@ export default function NotificationScreen({ navigation }) {
                     onPress={handleAcceptInvite}
                     style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, backgroundColor: theme.primary, marginHorizontal: 3 }}
                   >
-                    <Text style={{ color: '#fff', fontWeight: '600' }}>Accept</Text>
+                    <Text style={{ color: theme.background, fontWeight: '600' }}>Accept</Text>
                   </TouchableOpacity>
                 </>
               )}
@@ -423,57 +468,62 @@ export default function NotificationScreen({ navigation }) {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={async () => {
-                setRefreshing(true);
-                const userId = auth.currentUser.uid;
-                const q = query(
-                  collection(db, 'users', userId, 'notifications'),
-                  orderBy('timestamp', 'desc')
-                );
-                const snapshot = await getDocs(q);
-                const data = await Promise.all(snapshot.docs.map(async doc => {
-                  const notif = { id: doc.id, ...doc.data() };
-                  if (notif.fromUserId) {
-                    try {
-                      const userDoc = await getDocs(query(collection(db, 'users'), where('__name__', '==', notif.fromUserId)));
-                      if (!userDoc.empty) {
-                        const userData = userDoc.docs[0].data();
-                        notif.fromUserName = userData.name || 'Someone';
-                        notif.fromUserPhoto = userData.photoURL || null;
-                        notif.fromUserIsVerified = (userData.subscriptionPlan === 'paid') || (userData.verified === true);
-                      } else {
-                        notif.fromUserName = 'Someone';
-                        notif.fromUserPhoto = null;
-                        notif.fromUserIsVerified = false;
-                      }
-                    } catch (e) {
+          onRefresh={async () => {
+            setRefreshing(true);
+            const userId = auth.currentUser.uid;
+            const subQ = query(collection(db, 'users', userId, 'notifications'), orderBy('timestamp', 'desc'));
+            const snapSub = await getDocs(subQ);
+            const subRows = snapSub.docs.map(doc => ({ id: doc.id, __source: 'sub', ...doc.data() }));
+            // Reuse enrich from live listener for consistent rendering
+            const enrich = async (rows) => {
+              const data = await Promise.all(rows.map(async d => {
+                const notif = { ...d };
+                if (notif.fromUserId && notif.type !== 'eventReminder') {
+                  try {
+                    const userDoc = await getDocs(query(collection(db, 'users'), where('__name__', '==', notif.fromUserId)));
+                    if (!userDoc.empty) {
+                      const userData = userDoc.docs[0].data();
+                      notif.fromUserName = userData.name || userData.displayName || userData.fullName || 'Someone';
+                      notif.fromUserPhoto = userData.photoURL || userData.image || null;
+                      notif.fromUserIsVerified = (userData.subscriptionPlan === 'paid') || (userData.verified === true);
+                    } else {
                       notif.fromUserName = 'Someone';
                       notif.fromUserPhoto = null;
                       notif.fromUserIsVerified = false;
                     }
+                  } catch (e) {
+                    notif.fromUserName = 'Someone';
+                    notif.fromUserPhoto = null;
+                    notif.fromUserIsVerified = false;
                   }
-                  return notif;
-                }));
-
-                const seen = new Map();
-                const filteredData = data.filter((notif) => {
-                  if (notif.type !== 'follow') return true;
+                }
+                return notif;
+              }));
+              const seenFollows = new Set();
+              const filteredData = data.filter((notif) => {
+                if (notif.type === 'follow') {
                   if (!notif.fromUserId) return true;
-                  if (seen.has(notif.fromUserId)) return false;
-                  seen.set(notif.fromUserId, true);
+                  if (seenFollows.has(notif.fromUserId)) return false;
+                  seenFollows.add(notif.fromUserId);
                   return true;
-                });
-
-                const sortedData = filteredData.sort((a, b) => {
-                  if (a.timestamp && b.timestamp) {
-                    return b.timestamp.seconds - a.timestamp.seconds;
-                  }
-                  return 0;
-                });
-
-                setNotifications(sortedData);
-                setRefreshing(false);
-              }}
+                }
+                return true;
+              });
+              const withTs = filteredData.filter(n => !!n.timestamp);
+              const sortedData = withTs.sort((a, b) => {
+                if (a.timestamp && b.timestamp) {
+                  const aSec = a.timestamp.seconds || (a.timestamp.toDate ? Math.floor(a.timestamp.toDate().getTime()/1000) : 0);
+                  const bSec = b.timestamp.seconds || (b.timestamp.toDate ? Math.floor(b.timestamp.toDate().getTime()/1000) : 0);
+                  return bSec - aSec;
+                }
+                return 0;
+              });
+              return sortedData;
+            };
+            const enriched = await enrich(subRows);
+            setNotifications(enriched);
+            setRefreshing(false);
+          }}
             />
           }
         />

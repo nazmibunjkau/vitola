@@ -14,6 +14,97 @@ import cities from '../assets/cities.json';
 
 // Session Feelings constant
 const sessionFeelings = ['Relaxing', 'Social', 'Celebratory', 'Reflective', 'Routine'];
+const __notifPrefsCache = {};
+
+async function __getNotificationPrefs(recipientId, options = {}) {
+  const { forceFresh = false } = options;
+  const coerceBool = (v) => (typeof v === 'boolean' ? v : String(v).toLowerCase() === 'true');
+
+  // Default = ON unless turned off
+  const defaults = {
+    likes: true,
+    comments: true,
+    follows: true,
+    invites: true,
+    eventReminders: true,
+    attendeeJoins: true,
+    marketing: true,
+    newFeatures: true,
+  };
+
+  if (!forceFresh && __notifPrefsCache[recipientId]) return __notifPrefsCache[recipientId];
+
+  try {
+    const snap = await getDoc(doc(db, 'users', recipientId, 'settings', 'notification_prefs'));
+    const raw = snap.exists() ? snap.data() : {};
+    const normalized = { ...defaults, ...raw };
+    Object.keys(normalized).forEach(k => { normalized[k] = coerceBool(normalized[k]); });
+    __notifPrefsCache[recipientId] = normalized;
+    console.log('[notifPrefs] loaded', recipientId, normalized);
+    return normalized;
+  } catch (err) {
+    // Fail CLOSED so we don’t spam if we can’t read prefs
+    console.warn('[notifPrefs] read failed; failing closed', err?.message || err);
+    return {
+      likes: false,
+      comments: false,
+      follows: false,
+      invites: false,
+      eventReminders: false,
+      attendeeJoins: false,
+      marketing: false,
+      newFeatures: false,
+    };
+  }
+}
+
+async function notifyIfAllowed(recipientId, type, extra = {}) {
+  try {
+    // Gate by recipient prefs (your existing function)
+    const prefs = await __getNotificationPrefs(recipientId, { forceFresh: true });
+
+    const allow =
+      (type === 'like'    && prefs.likes)    ||
+      (type === 'comment' && prefs.comments) ||
+      (type === 'follow'  && prefs.follows)  ||
+      (type === 'invite'  && prefs.invites);
+
+    console.log('[notifyIfAllowed] decide', { recipientId, type, allow, prefs });
+
+    if (!allow) return;
+
+    const me = auth.currentUser?.uid;
+    if (!me) throw new Error('Not signed in');
+    if (recipientId === me) return; // never notify yourself
+
+    // Build a strict payload that only includes allowed keys & non-empty values
+    const payload = {
+      type,
+      fromUserId: me,
+      read: false,
+      timestamp: serverTimestamp(),
+    };
+
+    // Conditionally add ONLY allowed optional fields if provided and non-empty
+    if (extra.postId) payload.postId = String(extra.postId);
+    if (extra.commentText) payload.commentText = String(extra.commentText).slice(0, 500);
+    if (extra.clubId) payload.clubId = String(extra.clubId);
+    if (extra.clubName) payload.clubName = String(extra.clubName).slice(0, 120);
+
+    // Log the exact keys being written
+    console.log('[notifyIfAllowed] write payload keys', Object.keys(payload));
+
+    const notifRef = doc(collection(db, 'users', recipientId, 'notifications'));
+    await setDoc(notifRef, payload);
+  } catch (e) {
+    console.warn('[notifyIfAllowed] failed:', {
+      code: e?.code,
+      message: e?.message || String(e),
+      recipientId,
+      type,
+    });
+  }
+}
 
 export default function Home({ navigation }) {
     const { theme } = useTheme();
@@ -81,71 +172,106 @@ export default function Home({ navigation }) {
       return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     };
 
-    // Fetch current user first name for greeting
+    // Fetch current user, wire listeners, and clean up correctly
     useEffect(() => {
-      const unsubscribe = onAuthStateChanged(auth, async (user) => {
-        if (user && isFirstLoad.current) {
-          let unsubFollowing = null;
-          const docRef = doc(db, "users", user.uid);
-          const unsubUser = onSnapshot(docRef, (docSnap) => {
-            if (docSnap.exists()) {
-              const data = docSnap.data();
-              const name = data.name || user.displayName || "User";
-              setFirstName(name.split(' ')[0]);
-            }
-            // Live-following listener (subcollection-based)
-            if (!unsubFollowing) {
-              const followingRef = collection(db, 'users', user.uid, 'following');
-              unsubFollowing = onSnapshot(followingRef, (snap) => {
-                const ids = snap.docs.map(d => d.id);
+      // Hold all unsubscribe handles in the effect scope
+      let offAuth = null;
+      let unsubUser = null;
+      let unsubFollowing = null;
+      let unsubMyPrefs = null;
+      let unsubNotifications = null;
+
+      offAuth = onAuthStateChanged(auth, async (user) => {
+        // Tear down any prior user-scoped listeners before wiring new ones
+        if (unsubUser) { try { unsubUser(); } catch {} unsubUser = null; }
+        if (unsubFollowing) { try { unsubFollowing(); } catch {} unsubFollowing = null; }
+        if (unsubMyPrefs) { try { unsubMyPrefs(); } catch {} unsubMyPrefs = null; }
+        if (unsubNotifications) { try { unsubNotifications(); } catch {} unsubNotifications = null; }
+
+        if (!user) {
+          return;
+        }
+
+        // User is signed in
+        const userDocRef = doc(db, 'users', user.uid);
+        unsubUser = onSnapshot(userDocRef, (docSnap) => {
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            const name = data.name || user.displayName || 'User';
+            setFirstName(name.split(' ')[0]);
+          }
+          // Following listener (subcollection-based)
+          if (!unsubFollowing) {
+            const followingRef = collection(db, 'users', user.uid, 'following');
+            unsubFollowing = onSnapshot(
+              followingRef,
+              (snap) => {
+                const ids = snap.docs.map((d) => d.id);
                 setFollowing(ids);
-              }, (err) => {
+              },
+              (err) => {
                 console.error('following listener error:', err);
                 setFollowing([]);
-              });
+              }
+            );
+          }
+        });
+
+        // My notification prefs live listener (keeps cache in sync)
+        const myPrefsRef = doc(db, 'users', user.uid, 'settings', 'notification_prefs');
+        unsubMyPrefs = onSnapshot(myPrefsRef, (snap) => {
+          if (!snap.exists()) return;
+          const coerce = (v) => (typeof v === 'boolean' ? v : String(v).toLowerCase() === 'true');
+          const normalized = {
+            likes: true,
+            comments: true,
+            follows: true,
+            invites: true,
+            eventReminders: true,
+            attendeeJoins: true,
+            marketing: true,
+            newFeatures: true,
+            ...snap.data(),
+          };
+          Object.keys(normalized).forEach((k) => (normalized[k] = coerce(normalized[k])));
+          __notifPrefsCache[user.uid] = normalized;
+          console.log('[notifPrefs] self-change', normalized);
+        });
+
+        // Unread notifications listener (badge + invite alert)
+        const notificationsRef = collection(db, 'users', user.uid, 'notifications');
+        const qUnread = query(notificationsRef, where('read', '==', false));
+        unsubNotifications = onSnapshot(qUnread, (snapshot) => {
+          setHasUnreadNotifications(!snapshot.empty);
+
+          snapshot.docChanges().forEach((change) => {
+            if (change.type === 'added') {
+              const n = change.doc.data();
+              if (n?.type === 'invite') {
+                const clubName = n?.clubName || 'a club';
+                Alert.alert(
+                  'Club Invite',
+                  `You have been invited to join ${clubName}.`,
+                  [
+                    { text: 'Dismiss', style: 'cancel' },
+                    { text: 'View', onPress: () => { try { navigation.navigate('NotificationScreen'); } catch {} } },
+                  ]
+                );
+              }
             }
           });
-
-          const notificationsRef = collection(db, 'users', user.uid, 'notifications');
-          const q = query(notificationsRef, where('read', '==', false));
-          const unsubNotifications = onSnapshot(q, (snapshot) => {
-            setHasUnreadNotifications(!snapshot.empty);
-
-            // Real-time pop for newly added notifications (e.g., invite)
-            snapshot.docChanges().forEach((change) => {
-              if (change.type === 'added') {
-                const n = change.doc.data();
-                if (n?.type === 'invite') {
-                  const clubName = n?.clubName || 'a club';
-                  Alert.alert(
-                    'Club Invite',
-                    `You have been invited to join ${clubName}.`,
-                    [
-                      { text: 'Dismiss', style: 'cancel' },
-                      {
-                        text: 'View',
-                        onPress: () => {
-                          // Navigate to notifications (or an Invites screen if you add one later)
-                          try { navigation.navigate('NotificationScreen'); } catch {}
-                        },
-                      },
-                    ]
-                  );
-                }
-              }
-            });
-          });
-
-          isFirstLoad.current = false;
-          return () => {
-            unsubUser();
-            unsubNotifications();
-            if (unsubFollowing) unsubFollowing();
-          };
-        }
+        });
       });
-      return () => unsubscribe();
-    }, []);
+
+      // Cleanup on unmount
+      return () => {
+        if (offAuth) { try { offAuth(); } catch {} }
+        if (unsubUser) { try { unsubUser(); } catch {} }
+        if (unsubFollowing) { try { unsubFollowing(); } catch {} }
+        if (unsubMyPrefs) { try { unsubMyPrefs(); } catch {} }
+        if (unsubNotifications) { try { unsubNotifications(); } catch {} }
+      };
+    }, [navigation]);
 
     useFocusEffect(
       useCallback(() => {
@@ -409,15 +535,11 @@ export default function Home({ navigation }) {
             userId: currentUserId,
             createdAt: serverTimestamp(),
           });
-          // Notify the post owner only on new like and not for own post
+          // Notify (gated by recipient prefs) only on new like and not for own post
           if (activity && activity.user_id !== currentUserId) {
-            const notifRef = doc(collection(db, 'users', activity.user_id, 'notifications'));
-            await setDoc(notifRef, {
-              type: 'like',
+            await notifyIfAllowed(activity.user_id, 'like', {
               fromUserId: currentUserId,
               postId: activity.id,
-              timestamp: new Date(),
-              read: false,
             });
           }
         }
@@ -729,6 +851,7 @@ export default function Home({ navigation }) {
 
                                                   setFollowing(prev => [...new Set([...prev, them])]);
                                                   Alert.alert("Followed", "You are now following this user.");
+                                                  await notifyIfAllowed(them, 'follow');
                                                 } catch (err) {
                                                   console.error("Follow error:", err);
                                                   Alert.alert("Error", "Could not follow user.");
@@ -1137,14 +1260,10 @@ export default function Home({ navigation }) {
                                   createdAt: new Date()
                                 });
                                 if (activity.user_id !== auth.currentUser.uid) {
-                                  const notifRef = doc(collection(db, 'users', activity.user_id, 'notifications'));
-                                  await setDoc(notifRef, {
-                                    type: 'comment',
+                                  await notifyIfAllowed(activity.user_id, 'comment', {
                                     fromUserId: auth.currentUser.uid,
                                     postId: activity.id,
                                     commentText: comment.trim(),
-                                    timestamp: new Date(),
-                                    read: false,
                                   });
                                 }
                                 Keyboard.dismiss();

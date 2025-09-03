@@ -8,6 +8,7 @@ import { auth } from '../config/firebase';
 import { signOut } from 'firebase/auth';
 import { useTheme } from '../context/ThemeContext';
 import { ArrowLeftIcon } from "react-native-heroicons/solid"
+import { CommonActions } from '@react-navigation/native';
 
 export default function Settings({ navigation }) {
   const { theme } = useTheme();
@@ -15,8 +16,13 @@ export default function Settings({ navigation }) {
   const [emailAddress, setEmailAddress] = useState("")
 
   const handleLogout = async () => {
-    await signOut(auth);
-  }
+    try {
+      await signOut(auth);
+      // No manual navigation: App.js switches stacks via useAuth()
+    } catch (e) {
+      console.warn('[Logout] Sign out failed:', e?.code || String(e));
+    }
+  };
 
   const handleOptionPress = (label) => {
     switch (label) {
@@ -32,8 +38,6 @@ export default function Settings({ navigation }) {
       case 'Data Usage':
         navigation.navigate('DataUsage');
         break;
-      case 'Security':
-        navigation.navigate('Security');
         break;
       case 'Privacy':
         navigation.navigate('Privacy');
@@ -94,7 +98,6 @@ export default function Settings({ navigation }) {
               { label: "Notifications", icon: "notifications-outline" },
               { label: "App Appearance", icon: "color-palette-outline" },
               { label: "Data Usage", icon: "cloud-outline" },
-              { label: "Security", icon: "shield-checkmark-outline" },
               { label: "Privacy", icon: "lock-closed-outline" },
               { label: "Support", icon: "help-circle-outline" },
               { label: "FAQ", icon: "help-buoy-outline" },

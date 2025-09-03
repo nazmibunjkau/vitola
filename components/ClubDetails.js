@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { doc, getDoc, collection, getDocs, updateDoc, deleteDoc, addDoc, setDoc, query, orderBy, onSnapshot, where, startAt, endAt, limit, writeBatch, documentId } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, updateDoc, deleteDoc, addDoc, setDoc, query, orderBy, onSnapshot, where, startAt, endAt, limit, writeBatch, documentId, serverTimestamp } from 'firebase/firestore';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { db } from '../config/firebase';
 import React from 'react';
@@ -102,7 +102,16 @@ export default function ClubDetails() {
   const isOwner = !!(auth.currentUser && (clubData?.createdBy === auth.currentUser.uid || clubData?.ownerId === auth.currentUser.uid));
   const canViewPrivate = !isPrivate || isOwner || isMember;
   const canEngage = isOwner || isMember;
-  const [hasLeftClub, setHasLeftClub] = useState(false);
+  const isEventOwner = !!(auth.currentUser && selectedEvent?.createdBy === auth.currentUser.uid);
+
+  // Sets a JS timer; when due, writes a notification doc and shows Alert
+  const armInAppEventReminder = async (ev) => {
+    return;
+  };
+
+  const cancelInAppEventReminder = () => {
+    return
+  };
 
   const cleanupEngagementListeners = () => {
     try {
@@ -158,6 +167,14 @@ export default function ClubDetails() {
           return { uid, name: 'User', photoURL: null };
         }));
         setEventAttendeesProfiles(profiles.filter(Boolean));
+        try {
+          const me = auth.currentUser;
+          if (me?.uid && ev?.id) {
+            const att = await getDoc(doc(db, 'clubs', club.id, 'events', ev.id, 'attendees', me.uid));
+            if (att.exists()) armInAppEventReminder(ev);
+            else cancelInAppEventReminder();
+          }
+        } catch {}
       } else {
         setEventAttendeesProfiles([]);
       }
@@ -171,6 +188,9 @@ export default function ClubDetails() {
       if (!user || !selectedEvent?.id) return;
 
       const ref = doc(db, 'clubs', club.id, 'events', selectedEvent.id, 'attendees', user.uid);
+      const existingAttSnap = await getDoc(ref);
+      const existedBefore = existingAttSnap.exists();
+
       const profileSnap = await getDoc(doc(db, 'users', user.uid));
       const u = profileSnap.exists() ? profileSnap.data() : {};
 
@@ -180,6 +200,64 @@ export default function ClubDetails() {
         photoURL: u.photoURL || u.image || user.photoURL || null,
         timestamp: new Date(),
       });
+      // Notify the event creator that someone new is attending (in-app notification, no popup)
+      try {
+        const creatorId = (
+          selectedEvent?.createdBy ||
+          selectedEvent?.ownerId ||
+          clubData?.createdBy ||
+          clubData?.ownerId ||
+          null
+        );
+        if (!existedBefore && creatorId && creatorId !== user.uid) {
+          // Respect creator's notification preferences
+          let allow = true;
+          try {
+            const prefsSnapCreator = await getDoc(doc(db, 'users', creatorId, 'settings', 'notification_prefs'));
+            const prefsCreator = prefsSnapCreator.exists() ? (prefsSnapCreator.data() || {}) : {};
+            // Accept either key if your settings UI uses one or the other
+            if (
+              prefsCreator.attendeeJoins === false ||
+              prefsCreator.eventAttend === false ||
+              prefsCreator.eventAttendance === false
+            ) {
+              allow = false;
+            }
+          } catch (_) {
+            // If we cannot read prefs (rules/network), default to allow to match existing like/follow/comment behavior
+          }
+
+          if (allow) {
+            const payload = {
+              type: 'eventAttend',
+              fromUserId: user.uid,
+              clubId: club.id,
+              clubName: clubData?.name || 'Vitola Club',
+              eventId: selectedEvent.id,
+              eventTitle: selectedEvent.title || 'Event',
+              timestamp: serverTimestamp(),
+              read: false,
+            };
+            await addDoc(collection(db, 'users', creatorId, 'notifications'), payload);
+            try { console.log('[Notif] eventAttend →', creatorId); } catch {}
+          } else {
+            try { console.log('[Notif] eventAttend suppressed by creator prefs'); } catch {}
+          }
+        }
+      } catch (e) {
+        console.warn('[Notif] eventAttend write failed:', e?.code || String(e));
+      }
+      try {
+        const prefsSnap = await getDoc(doc(db, 'users', user.uid, 'settings', 'notification_prefs'));
+        const prefs = prefsSnap.exists() ? prefsSnap.data() : {};
+        if (prefs.eventReminders === false) {
+          // user opted out – do NOT schedule any in-app reminder
+          return;
+        }
+      } catch {
+        // Fail closed to protect user: if we can't read, do nothing (no reminder).
+      }
+      if (selectedEvent?.id) { armInAppEventReminder(selectedEvent); }
     } catch (e) {
       Alert.alert('Attend failed', e.message || String(e));
     }
@@ -198,6 +276,7 @@ export default function ClubDetails() {
         'attendees',
         user.uid
       );
+      cancelInAppEventReminder();
       await deleteDoc(ref);
     } catch (e) {
       Alert.alert('Unattend failed', e.message || String(e));
@@ -410,6 +489,22 @@ export default function ClubDetails() {
         setSendingInvite(false);
         return Alert.alert('User not found', 'No user exists with that ID.');
       }
+      // Respect recipient's notification/invite preferences before writing anything
+      try {
+        const prefsSnap = await getDoc(doc(db, 'users', target, 'settings', 'notification_prefs'));
+        const prefs = prefsSnap.exists() ? (prefsSnap.data() || {}) : {};
+        // If the recipient has invites turned off, do not create invite or notification
+        if (prefs.invites === false) {
+          setSendingInvite(false);
+          Alert.alert('Invites disabled', 'This user is not accepting club invites.');
+          return;
+        }
+      } catch (e) {
+        // If we cannot read prefs (rules or network), fail closed to protect user
+        setSendingInvite(false);
+        Alert.alert('Invites disabled', 'This user is not accepting club invites at this time.');
+        return;
+      }
       // Write with deterministic id to avoid duplicates and avoid reading recipient's invites
       const inviteId = `${club.id}_${user.uid}`; // one pending invite per sender per club
       const inviteRef = doc(db, 'users', target, 'invites', inviteId);
@@ -424,14 +519,23 @@ export default function ClubDetails() {
         // This will CREATE if absent; if it exists, Firestore treats as UPDATE which our rules forbid for sender,
         // causing a permission error we map to a friendly "already invited" message.
         await setDoc(inviteRef, payload, { merge: false });
-        await addDoc(collection(db, 'users', target, 'notifications'), {
-          type: 'invite',
-          fromUserId: user.uid,
-          clubId: club.id,
-          clubName: clubData?.name || 'Vitola Club',
-          timestamp: new Date(),
-          read: false,
-        });
+        // Also notify the recipient if they allow invite notifications
+        try {
+          const prefsSnap2 = await getDoc(doc(db, 'users', target, 'settings', 'notification_prefs'));
+          const prefs2 = prefsSnap2.exists() ? (prefsSnap2.data() || {}) : {};
+          if (prefs2.invites !== false) {
+            await addDoc(collection(db, 'users', target, 'notifications'), {
+              type: 'invite',
+              fromUserId: user.uid,
+              clubId: club.id,
+              clubName: clubData?.name || 'Vitola Club',
+              timestamp: new Date(),
+              read: false,
+            });
+          }
+        } catch (e) {
+          // Silently ignore if prefs are unreadable or write blocked by rules
+        }
       } catch (err) {
         // If we hit permission denied here, it's likely because the doc already exists
         const msg = (err && (err.code === 'permission-denied' || String(err).includes('Missing or insufficient permissions'))) ?
@@ -512,6 +616,7 @@ export default function ClubDetails() {
     }
   };
   const closeEventDetail = () => {
+    cancelInAppEventReminder(); 
     setEventDetailVisible(false);
     setSelectedEvent(null);
   };
@@ -531,7 +636,13 @@ export default function ClubDetails() {
       (snap) => {
         const list = snap.docs.map(d => ({ id: d.id, ...(d.data() || {}) }));
         setAttendees(list.map(x => ({ uid: x.uid || x.id, name: x.name || 'User', photoURL: x.photoURL || null })));
-        setIsAttending(!!list.find(d => d.id === uid));
+        const amIn = !!list.find(d => d.id === uid);
+        setIsAttending(amIn);
+        if (amIn && selectedEvent?.id) {
+          armInAppEventReminder(selectedEvent);
+        } else {
+          cancelInAppEventReminder();
+        }
       },
       (err) => console.warn('attendees listener error', err)
     );
@@ -1519,6 +1630,10 @@ export default function ClubDetails() {
     }
   };
   const confirmTags = () => { setEditClubTags(selectedTags.join(', ')); setTagPickerVisible(false); };
+
+  useEffect(() => {
+    return () => { cancelInAppEventReminder(); };
+  }, []);
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
@@ -2908,69 +3023,36 @@ export default function ClubDetails() {
                 </View>
               )}
 
-              {/* Attendees section */}
-              <View style={{ marginTop: 12 }}>
-                {/* Attend / Unattend (non-owner) */}
-                {!isOwner && selectedEvent?.id ? (
-                  isAttending ? (
-                    <TouchableOpacity
-                      onPress={unattendSelectedEvent}
-                      style={[
-                        styles.modalPrimaryBtn,
-                        { backgroundColor: theme.primary, alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }
-                      ]}
-                      activeOpacity={0.85}
+              {/* Attendees section (list only; no Attend/Unattend buttons) */}
+              {!!(attendees && attendees.length > 0) && (
+                <View style={{ marginTop: 18 }}>
+                  <Text style={[styles.sectionTitle, { color: theme.text }]}>Attendees</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 8 }}>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={{ flexDirection: 'row', gap: 12, paddingRight: 20, marginTop: 8 }}
                     >
-                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                        <Ionicons name="close-circle-outline" size={18} color={theme.iconOnPrimary} style={{ marginRight: 6 }} />
-                        <Text style={{ color: theme.iconOnPrimary, fontWeight: '600' }}>Unattend</Text>
-                      </View>
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity
-                      onPress={attendSelectedEvent}
-                      style={[
-                        styles.modalPrimaryBtn,
-                        { backgroundColor: theme.primary, alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }
-                      ]}
-                      activeOpacity={0.85}
-                    >
-                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                        <Ionicons name="checkmark-circle-outline" size={18} color={theme.iconOnPrimary} style={{ marginRight: 6 }} />
-                        <Text style={{ color: theme.iconOnPrimary, fontWeight: '600' }}>Attend</Text>
-                      </View>
-                    </TouchableOpacity>
-                  )
-                ) : (
-                  // Owner OR attendee – show list
-                  <View>
-                    <Text style={{ color: theme.text, fontWeight: '700', marginBottom: 6 }}>
-                      Attendees ({attendees.length})
-                    </Text>
-
-                    {attendees.length === 0 ? (
-                      <Text style={{ color: theme.text, opacity: 0.6 }}>No attendees yet.</Text>
-                    ) : (
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                        {attendees.map((a) => (
-                          <View
-                            key={a.uid}
-                            style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12, marginBottom: 10 }}
-                          >
-                            <Image
-                              source={a.photoURL ? { uri: a.photoURL } : require('../img/profile.png')}
-                              style={{ width: 28, height: 28, borderRadius: 14, marginRight: 6 }}
-                            />
-                            <Text style={{ color: theme.text }} numberOfLines={1}>
-                              {a.name}
-                            </Text>
-                          </View>
-                        ))}
-                      </View>
-                    )}
+                      {attendees.map((a) => (
+                        <TouchableOpacity
+                          key={a.uid || a.id}
+                          onPress={() => goToUserProfile(a.uid || a.id)}
+                          activeOpacity={0.8}
+                          style={{ alignItems: 'center', width: 72 }}
+                        >
+                          <Image
+                            source={a.photoURL ? { uri: a.photoURL } : require('../img/profile.png')}
+                            style={{ width: 56, height: 56, borderRadius: 28, marginBottom: 6 }}
+                          />
+                          <Text numberOfLines={1} style={{ fontSize: 12, color: theme.text, opacity: 0.85 }}>
+                            {a.name || 'User'}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
                   </View>
-                )}
-              </View>
+                </View>
+              )}
 
               {/* Max Attendees – moved above Photos */}
               {!isEditingEvent && (
@@ -3013,6 +3095,23 @@ export default function ClubDetails() {
             </ScrollView>
           ) : (
             <Text style={{ color: theme.text }}>Loading...</Text>
+          )}
+
+          {/* Bottom anchored Attend/Unattend button */}
+          {(!isEditingEvent && !isEventOwner) && (
+            <View style={styles.bottomAttendBar} pointerEvents="box-none">
+              <View style={styles.bottomAttendInner}>
+                <TouchableOpacity
+                  onPress={isAttending ? unattendSelectedEvent : attendSelectedEvent}
+                  activeOpacity={0.9}
+                  style={[styles.attendWideBtn, { backgroundColor: theme.primary }]}
+                >
+                  <Text style={[styles.attendWideBtnText, { color: theme.iconOnPrimary }]}>
+                    {isAttending ? 'Unattend' : 'Attend'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           )}
         </View>
       </Modal>
@@ -3532,5 +3631,33 @@ const styles = StyleSheet.create({
   popupOption: {
     paddingVertical: 12,
     paddingHorizontal: 8,
+  },
+  bottomAttendBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingBottom: 50,
+    paddingTop: 8,
+    backgroundColor: 'transparent',
+  },
+  bottomAttendInner: {
+    alignItems: 'center',
+  },
+  attendWideBtn: {
+    width: '86%',            // wide, but not full width
+    alignSelf: 'center',
+    paddingVertical: 14,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  attendWideBtnText: {
+    textAlign: 'center',
+    fontWeight: '700',
+    fontSize: 16,
   },
 });
