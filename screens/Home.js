@@ -11,6 +11,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import Autocomplete from 'react-native-autocomplete-input';
 import cities from '../assets/cities.json';
+import * as Notifications from 'expo-notifications';
+import { registerForPushAndSave } from '../notifications/registerPush';
 
 // Session Feelings constant
 const sessionFeelings = ['Relaxing', 'Social', 'Celebratory', 'Reflective', 'Routine'];
@@ -190,6 +192,25 @@ export default function Home({ navigation }) {
 
         if (!user) {
           return;
+        }
+
+        try {
+          // Register for push and save token
+          registerForPushAndSave();
+
+          // Optional: foreground (in-app) listeners so taps work
+          const subReceived = Notifications.addNotificationReceivedListener(() => {});
+          const subResponse = Notifications.addNotificationResponseReceivedListener((resp) => {
+            // Deep link or open NotificationScreen on tap
+            try { navigation.navigate('NotificationScreen'); } catch {}
+          });
+          // Remember to remove in the cleanup at the bottom
+          unsubNotifications = () => {
+            try { subReceived.remove(); } catch {}
+            try { subResponse.remove(); } catch {}
+          };
+        } catch (e) {
+          console.warn('[push] register failed', e);
         }
 
         // User is signed in

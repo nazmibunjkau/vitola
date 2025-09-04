@@ -1,16 +1,144 @@
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity } from 'react-native'
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, Platform, Alert, ActivityIndicator } from 'react-native'
 import React from 'react'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useNavigation } from '@react-navigation/native'
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import LottieView from 'lottie-react-native';
+import Constants from 'expo-constants';
 
 export default function Upgrade() {
   const navigation = useNavigation();
   const [selectedPlan, setSelectedPlan] = React.useState('Annually');
   const { theme } = useTheme();
   const dynamicStyles = getStyles(theme);
+
+  // --- IAP wiring (safe for Expo Go via dynamic import) ---
+  const PRODUCT_IDS = {
+    Monthly: 'premium_monthly',
+    Annually: 'premium_annual',
+  };
+
+  const [processing, setProcessing] = React.useState(false);
+  const [iapAvailable, setIapAvailable] = React.useState(false);
+  const [products, setProducts] = React.useState([]);
+  const RNIapRef = React.useRef(null);
+
+  React.useEffect(() => {
+    let purchaseUpdateSub;
+    let purchaseErrorSub;
+
+    const init = async () => {
+      // Dynamically import so Expo Go (no native IAP) doesn't crash
+      let RNIap;
+      try {
+        if (Constants?.appOwnership === 'expo') {
+          console.warn('[IAP] Skipping IAP setup in Expo Go');
+          setIapAvailable(false);
+          return;
+        }
+        RNIap = await import('react-native-iap');
+        RNIapRef.current = RNIap;
+        setIapAvailable(true);
+      } catch (e) {
+        console.warn('[IAP] react-native-iap not installed in this build; running without IAP');
+        setIapAvailable(false);
+        return; // Skip listener wiring
+      }
+
+      try {
+        await RNIap.initConnection();
+        try { await RNIap.flushFailedPurchasesCachedAsPendingAndroid?.(); } catch {}
+        const list = await RNIap.getSubscriptions(Object.values(PRODUCT_IDS));
+        setProducts(list || []);
+      } catch (e) {
+        console.warn('[IAP] init/getSubscriptions failed:', e?.message || String(e));
+      }
+
+      purchaseUpdateSub = RNIap.purchaseUpdatedListener?.(async (purchase) => {
+        try {
+          const payload = {
+            platform: Platform.OS,
+            productId: purchase?.productId,
+            transactionId: purchase?.transactionId || purchase?.transactionIdIOS || purchase?.purchaseToken,
+            receipt: purchase?.transactionReceipt || purchase?.originalJson || null,
+            // If you have Firebase web auth available here, include:
+            // uid: auth?.currentUser?.uid || null,
+          };
+
+          // Forward to your backend for validation (replace with your deployed URL)
+          try {
+            await fetch('http://localhost:8080/iap/verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+          } catch (netErr) {
+            console.warn('[IAP] verify POST failed:', netErr?.message || String(netErr));
+          }
+
+          try {
+            if (Platform.OS === 'ios') {
+              await RNIap.finishTransaction?.(purchase, true);
+            } else {
+              await RNIap.acknowledgePurchaseAndroid?.(purchase.purchaseToken);
+              await RNIap.finishTransaction?.(purchase, false);
+            }
+          } catch (finErr) {
+            console.warn('[IAP] finishTransaction failed:', finErr?.message || String(finErr));
+          }
+
+          Alert.alert('Success', 'Thanks for upgrading!');
+        } catch (err) {
+          console.warn('[IAP] purchaseUpdated handler error:', err?.message || String(err));
+        } finally {
+          setProcessing(false);
+        }
+      });
+
+      purchaseErrorSub = RNIap.purchaseErrorListener?.((err) => {
+        console.warn('[IAP] purchase error:', err?.message || String(err));
+        setProcessing(false);
+      });
+    };
+
+    init();
+
+    return () => {
+      try { purchaseUpdateSub?.remove?.(); } catch {}
+      try { purchaseErrorSub?.remove?.(); } catch {}
+      try { RNIapRef.current?.endConnection?.(); } catch {}
+    };
+  }, []);
+
+  const handleSubscribe = async (plan) => {
+    const RNIap = RNIapRef.current;
+    const sku = PRODUCT_IDS[plan];
+
+    if (!sku) {
+      Alert.alert('Unavailable', 'Plan not available.');
+      return;
+    }
+    if (!iapAvailable || !RNIap) {
+      Alert.alert('Store unavailable', 'In-app purchases are not enabled in this build. Build a custom dev client to enable purchases.');
+      return;
+    }
+
+    // Optional: ensure product was returned by store
+    if (!(products || []).some(p => p.productId === sku)) {
+      console.warn('[IAP] Product not returned by store yet; proceeding anyway:', sku);
+    }
+
+    try {
+      setProcessing(true);
+      await RNIap.requestSubscription?.({ sku, andDangerouslyFinishTransactionAutomaticallyIOS: false });
+    } catch (e) {
+      console.warn('[IAP] requestSubscription failed:', e?.message || String(e));
+      setProcessing(false);
+      Alert.alert('Purchase failed', e?.message || 'Please try again.');
+    }
+  };
+
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <LottieView
@@ -118,9 +246,20 @@ export default function Upgrade() {
         </View>
       </ScrollView>
       <View style={dynamicStyles.bottomSection}>
-        <Text style={dynamicStyles.subscribeButton}>
-          Subscribe {selectedPlan}
-        </Text>
+        <TouchableOpacity
+          onPress={() => handleSubscribe(selectedPlan)}
+          disabled={processing}
+          style={dynamicStyles.subscribeButton}
+          activeOpacity={0.8}
+        >
+          {processing ? (
+            <ActivityIndicator />
+          ) : (
+            <Text style={dynamicStyles.subscribeButtonText}>
+              Subscribe {selectedPlan}
+            </Text>
+          )}
+        </TouchableOpacity>
         <Text style={dynamicStyles.altText}>Recurring billing. Cancel anytime</Text>
       </View>
     </SafeAreaView>
@@ -229,14 +368,18 @@ const getStyles = (theme) =>
     },
     subscribeButton: {
       backgroundColor: '#fff',
-      color: '#000',
-      textAlign: 'center',
+      alignItems: 'center',
+      justifyContent: 'center',
       paddingVertical: 14,
       borderRadius: 8,
-      fontSize: 16,
-      fontWeight: '600',
       marginBottom: 8,
       overflow: 'hidden',
+    },
+    subscribeButtonText: {
+      color: '#000',
+      textAlign: 'center',
+      fontSize: 16,
+      fontWeight: '600',
     },
     altText: {
       fontSize: 13,

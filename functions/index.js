@@ -6,6 +6,8 @@
  *
  * See a full list of supported triggers at https://firebase.google.com/docs/functions
  */
+import { sendPushOnNotifWrite } from './sendPushOnNotifWrite';
+export { sendPushOnNotifWrite };
 
 const {setGlobalOptions} = require("firebase-functions");
 const {onRequest} = require("firebase-functions/https");
